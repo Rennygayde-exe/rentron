@@ -1,0 +1,30 @@
+{
+  "responses": [
+    {
+      "id": "katie_confederacy",
+      "triggers": ["katie.*confederacy", "confederacy.*katie"],
+      "response": "I will note that officers (commission, warrant, and noncommissioned) of the United States Army are authorized to accept the surrender of and grant parole to members of the Army of Northern Virginia, pursuant to the terms of former COL Lee's surrender at Appomattox. Therefore, if anyone is displaying a confederate flag you can absolutely go accept their full and unconditional surrender."
+    },
+    {
+      "id": "good_bot",
+      "triggers": ["good bot", "you're a good bot"],
+      "response": "I fight for the user! Like Tron but trans and gay."
+    },
+    {
+      "id": "sherman_confederacy",
+      "triggers": ["sherman.*confederacy", "confederacy.*sherman"],
+      "response": "My only regret with the American south is that Tecumseh Sherman didn't keep burning and the lawful federal government of the United States of America didn't grind their shitty backwards culture into the dirt to start fresh like we did with the Germans and Japanese. Maybe then the south wouldn't still be poor and full of hate. The cruelest thing the union did was give the south mercy in 1865"
+    },
+    {
+      "id": "fuck_you_mention",
+      "triggers": ["fuck you"],
+      "response": "Fuck you too buddy, {mention}",
+      "mention_required": true
+    },
+    {
+      "id": "lp_sniper",
+      "triggers": ["Lyudmila Pavlichenko how many men have you killed?"],
+      "response": "Not men, Fascists... 309"
+    }
+  ]
+}
