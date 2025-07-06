@@ -1,1 +1,8 @@
 .env
+__pycache__/cli_chatbox.cpython-313.pyc
+__pycache__/signal_handler.cpython-313.pyc
+commands/__pycache__/__init__.cpython-313.pyc
+commands/__pycache__/general.cpython-313.pyc
+commands/__pycache__/moderation.cpython-313.pyc
+utils/__pycache__/__init__.cpython-313.pyc
+utils/__pycache__/responses.cpython-313.pyc
