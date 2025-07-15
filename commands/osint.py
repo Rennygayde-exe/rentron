@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 @app_commands.command(name="blackbird", description="Run Blackbird OSINT tool on a username")
 @app_commands.describe(username="The username to scan")
 async def blackbird(interaction: discord.Interaction, username: str):
+
+    if not any(role.name in ("Staff", "S6 Professional") for role in interaction.user.roles):
+        await interaction.followup.send("You don't have permission to run this command.", ephemeral=True)
+        return
     await interaction.response.send_message(f"Running Blackbird on `{username}`...", ephemeral=True)
 
     try:
