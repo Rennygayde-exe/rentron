@@ -6,3 +6,6 @@ commands/__pycache__/general.cpython-313.pyc
 commands/__pycache__/moderation.cpython-313.pyc
 utils/__pycache__/__init__.cpython-313.pyc
 utils/__pycache__/responses.cpython-313.pyc
+commands/__pycache__/application.cpython-313.pyc
+commands/__pycache__/osint.cpython-313.pyc
+applications.db
