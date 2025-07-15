@@ -9,3 +9,4 @@ utils/__pycache__/responses.cpython-313.pyc
 commands/__pycache__/application.cpython-313.pyc
 commands/__pycache__/osint.cpython-313.pyc
 applications.db
+blackbird/
