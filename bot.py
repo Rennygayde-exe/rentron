@@ -1,3 +1,4 @@
+
 import os
 import signal
 import asyncio
@@ -5,8 +6,15 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from utils.responses import load_responses, match_response
-from commands import general, moderation
+from commands import general, moderation, application, osint
+from commands.application import init_db
+from commands.application import ApplicationView
+from discord import app_commands
+
+from commands.osint import blackbird
 from signal_handler import signal_command
+from discord.ui import View, Button, Modal, TextInput
+from discord import Interaction, TextStyle
 
 load_dotenv()
 
@@ -27,16 +35,32 @@ def shutdown_handler(sig, frame):
 
 signal.signal(signal.SIGINT, shutdown_handler)
 
+async def load_extensions():
+    await bot.load_extension("commands.osint")
+async def main():
+    async with bot:
+        await load_extensions()
+        await bot.start(TOKEN)
 @bot.event
 async def on_ready():
+    init_db()
     print(f"Logged in as {bot.user}")
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     bot.tree.add_command(moderation.prune_cmd)
     bot.tree.add_command(moderation.rams_cmd)
     bot.tree.add_command(signal_command)
+    bot.tree.add_command(blackbird)
     await bot.tree.sync()
     load_responses()
+    bot.add_view(ApplicationView())
+    print("Bot is ready and commands are synced.")
+
+@bot.tree.command(name="post_application", description="Post the application button")
+@app_commands.checks.has_permissions(administrator=True)
+async def post_application(interaction: discord.Interaction):
+    await interaction.response.send_message("Click below to apply!", view=ApplicationView())
+
 
 @bot.event
 async def on_message(message):
