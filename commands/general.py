@@ -1,34 +1,19 @@
+import json
+import os
 from discord.ext import commands
 from utils.responses import load_responses, RESPONSES
 
-@commands.is_owner()
-@commands.command(name="reloadresponses")
-async def reload_responses(ctx):
-    load_responses()
-    await ctx.send("Response triggers reloaded.")
+RESPONSES = []
 
-@commands.is_owner()
-@commands.command(name="listresponses")
-async def list_responses(ctx):
+def load_responses():
+    global RESPONSES
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # /path/to/utils
+    root_dir = os.path.dirname(base_dir)  # go up to project root where bot.py is
+    file_path = os.path.join(root_dir, "responses.json")
+
     try:
-        if not RESPONSES:
-            await ctx.send("No responses are currently loaded.")
-            return
-
-        chunks = []
-        chunk = ""
-        for entry in RESPONSES:
-            line = f"**ID**: `{entry.get('id', 'n/a')}`\n"
-            line += f"**Triggers**: `{', '.join(entry.get('triggers', []))}`\n"
-            line += f"**Response**: {entry.get('response')}\n"
-            line += f"**Mention Required**: `{entry.get('mention_required', False)}`\n\n"
-            if len(chunk + line) > 1900:
-                chunks.append(chunk)
-                chunk = ""
-            chunk += line
-        chunks.append(chunk)
-
-        for part in chunks:
-            await ctx.send(part)
+        with open(file_path, "r", encoding="utf-8") as f:
+            RESPONSES = json.load(f)
     except Exception as e:
-        await ctx.send(f"Failed to list responses: {e}")
+        print(f"Error loading responses.json: {e}")
+        RESPONSES = []
