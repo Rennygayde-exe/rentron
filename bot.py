@@ -45,13 +45,13 @@ async def main():
 async def on_ready():
     init_db()
     print(f"Logged in as {bot.user}")
-    bot.add_command(general.load_responses)
+    bot.add_command(general.listresponses)
     bot.tree.add_command(moderation.prune_cmd)
     bot.tree.add_command(moderation.rams_cmd)
     bot.tree.add_command(signal_command)
 #   bot.tree.add_command(blackbird)   # Removed functionality for now - ren
     await bot.tree.sync()
-    load_responses()
+    listresponses()
     bot.add_view(ApplicationView())
     print("Bot is ready and commands are synced.")
 
