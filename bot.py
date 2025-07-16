@@ -80,14 +80,13 @@ async def post_application(interaction: Interaction):
     await interaction.response.send_message("Click below to apply!", view=ApplicationView())
 
 
+async def main():
+    async with bot:
+        await bot.start(token)
+
 if __name__ == "__main__":
     if token:
         load_responses()
         asyncio.run(main())
     else:
         print("Bot token not found in .env file.")
-
-
-async def main():
-    async with bot:
-        await bot.start(token)
