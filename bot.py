@@ -5,7 +5,7 @@ import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from utils.responses import load_responses, match_response
+from utils.responses import load_responses, match_response, RESPONSES
 from commands import general, moderation, application, osint
 from commands.application import init_db
 from commands.application import ApplicationView
@@ -45,6 +45,7 @@ async def main():
 async def on_ready():
     init_db()
     print(f"Logged in as {bot.user}")
+    load_responses()
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     bot.tree.add_command(moderation.prune_cmd)
