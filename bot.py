@@ -10,6 +10,7 @@ from commands import general, moderation, application, osint
 from commands.application import init_db
 from commands.application import ApplicationView
 from discord import app_commands
+import re
 
 from commands.osint import blackbird
 from signal_handler import signal_command
@@ -45,7 +46,6 @@ async def main():
 async def on_ready():
     init_db()
     print(f"Logged in as {bot.user}")
-    load_responses()
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     bot.tree.add_command(moderation.prune_cmd)
@@ -90,7 +90,8 @@ if __name__ == "__main__":
     import threading
 
     if token:
-        bot.run(token)
+        load_responses()
+        asyncio.run(main())
     else:
         print("Bot token not found in .env file.")
 
