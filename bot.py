@@ -50,7 +50,7 @@ async def on_ready():
     bot.tree.add_command(moderation.prune_cmd)
     bot.tree.add_command(moderation.rams_cmd)
     bot.tree.add_command(signal_command)
-    bot.tree.add_command(blackbird)
+#   bot.tree.add_command(blackbird)   # Removed functionality for now - ren
     await bot.tree.sync()
     load_responses()
     bot.add_view(ApplicationView())
