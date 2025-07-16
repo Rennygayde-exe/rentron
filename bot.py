@@ -45,7 +45,8 @@ async def main():
 async def on_ready():
     init_db()
     print(f"Logged in as {bot.user}")
-    bot.add_command(general.listresponses)
+    bot.add_command(general.reload_responses)
+    bot.add_command(general.list_responses)
     bot.tree.add_command(moderation.prune_cmd)
     bot.tree.add_command(moderation.rams_cmd)
     bot.tree.add_command(signal_command)
