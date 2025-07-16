@@ -6,6 +6,7 @@ import os
 RESPONSES = []
 
 def load_responses():
+    global RESPONSES
     base_dir = os.path.dirname(os.path.abspath(__file__))
     root_dir = os.path.dirname(base_dir)
     file_path = os.path.join(root_dir, "responses.json")
@@ -13,13 +14,11 @@ def load_responses():
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            RESPONSES.clear()
-            RESPONSES.extend(data.get("responses", []))
+            RESPONSES = data.get("responses", [])
             print(f"[responses] Loaded {len(RESPONSES)} entries.")
     except Exception as e:
-        print(f"[responses] Failed to load: {e}")
-        RESPONSES.clear()
-
+        print(f"[responses] Error loading responses.json: {e}")
+        RESPONSES = []
 @commands.is_owner()
 @commands.command(name="reloadresponses")
 async def reload_responses(ctx):
