@@ -19,7 +19,11 @@ load_dotenv()
 token = os.getenv("DISCORD_BOT_TOKEN")
 
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.members = True
+intents.messages = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
