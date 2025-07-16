@@ -14,7 +14,8 @@ async def reload_responses(ctx):
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
-            RESPONSES = json.load(f)
+            data = json.load(f)
+            RESPONSES = data.get("responses", [])
         await ctx.send("Response triggers reloaded.")
     except Exception as e:
         RESPONSES = []
