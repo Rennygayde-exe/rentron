@@ -56,11 +56,13 @@ def match_response(message, bot):
 
 @bot.event
 async def on_message(message):
+    print(f"[on_message] Received from {message.author}: {message.content}")  # Debug line
     await bot.process_commands(message)
     if message.author.bot:
         return
     response = match_response(message, bot)
     if response:
+        print(f"[match_response] Matched: {response}")  # Debug
         await message.channel.send(response)
 
 
