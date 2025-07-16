@@ -52,7 +52,6 @@ async def on_ready():
     bot.tree.add_command(signal_command)
 #   bot.tree.add_command(blackbird)   # Removed functionality for now - ren
     await bot.tree.sync()
-    listresponses()
     bot.add_view(ApplicationView())
     print("Bot is ready and commands are synced.")
 
