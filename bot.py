@@ -61,6 +61,21 @@ async def post_application(interaction: discord.Interaction):
     await interaction.response.send_message("Click below to apply!", view=ApplicationView())
 
 
+def match_response(message, bot):
+    for entry in RESPONSES:
+        triggers = entry.get("triggers", [])
+        mention_required = entry.get("mention_required", False)
+
+        for trig in triggers:
+            if re.search(trig, message.content, re.IGNORECASE):
+                if mention_required and bot.user not in message.mentions:
+                    continue  # Requires a mention but wasn't mentioned
+
+                response = entry.get("response", "")
+                return response.replace("{mention}", message.author.mention)
+    
+    return None
+
 @bot.event
 async def on_message(message):
     await bot.process_commands(message)
