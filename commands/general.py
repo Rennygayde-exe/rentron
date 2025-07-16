@@ -5,10 +5,12 @@ from utils.responses import load_responses, RESPONSES
 
 RESPONSES = []
 
-def load_responses():
+@commands.is_owner()
+@commands.command(name="listresponses")
+def listresponses():
     global RESPONSES
-    base_dir = os.path.dirname(os.path.abspath(__file__))  # /path/to/utils
-    root_dir = os.path.dirname(base_dir)  # go up to project root where bot.py is
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.dirname(base_dir)
     file_path = os.path.join(root_dir, "responses.json")
 
     try:
