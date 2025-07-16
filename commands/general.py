@@ -31,9 +31,7 @@ async def list_responses(ctx):
     chunks = []
     chunk = ""
     for entry in RESPONSES:
-        line = f"**ID**: `{entry.get('id', 'n/a')}`\n"
-        line += f"**Triggers**: `{', '.join(entry.get('triggers', []))}`\n"
-        line += f"**Response**: {entry.get('response')}\n"
+        line += f"**Triggers**: `{', '.join(entry.get('safetrg', []))}`\n"
         line += f"**Mention Required**: `{entry.get('mention_required', False)}`\n\n"
         if len(chunk + line) > 1900:
             chunks.append(chunk)
