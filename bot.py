@@ -46,10 +46,11 @@ def match_response(message, bot):
         mention_required = entry.get("mention_required", False)
 
         for trig in triggers:
-            if re.search(trig, message.content, re.IGNORECASE):
+            if trig.lower() in message.content.lower():
                 if mention_required and bot.user not in message.mentions:
                     continue
                 response = entry.get("response", "")
+                print(f"[match_response] Matched trigger: {trig}")
                 return response.replace("{mention}", message.author.mention)
     return None
 
