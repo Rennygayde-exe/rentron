@@ -18,6 +18,7 @@
 - **Application Review System** – Staff can approve and deny applications, or open tickets with users
 - **Ticket System** – Auto-creates private channels with transcript exports
 - **Modular Command Structure** – All commands are split across the `commands/` file structure
+- **SIGNAL CLI* – Send text messages to Signal Groupchats!
 
 ---
 
@@ -45,11 +46,14 @@ source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 
 # Fill out env file and save
-DISCORD_TOKEN=your_discord_token
-REVIEW_CHANNEL_ID=123456789012345678
-TICKET_CATEGORY_ID=123456789012345678
-TRANSCRIPT_CHANNEL_ID=123456789012345678
-BLACKBIRD_PATH=/path/to/blackbird/if/required
+DISCORD_BOT_TOKEN=
+SIGNAL_PHONE_NUMBER=
+TICKET_LOG_CHANNEL_ID=
+BLACKBIRDLOGS_ID=
+TICKET_CATEGORY_ID=
+STAFF_REVIEW_CHANNEL_ID=
+GUILD_ID=
+BLACKBIRD_PATH=
 
 # Run the bot
 python bot.py
