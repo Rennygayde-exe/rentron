@@ -36,8 +36,6 @@ def shutdown_handler(sig, frame):
 
 signal.signal(signal.SIGINT, shutdown_handler)
 
-async def load_extensions():
-    await bot.load_extension("commands.osint")
 async def main():
     async with bot:
         await load_extensions()
