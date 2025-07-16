@@ -30,14 +30,23 @@ async def list_responses(ctx):
 
     chunks = []
     chunk = ""
-    for entry in RESPONSES:
-        line += f"**Triggers**: `{', '.join(entry.get('safetrg', []))}`\n"
-        line += f"**Mention Required**: `{entry.get('mention_required', False)}`\n\n"
-        if len(chunk + line) > 1900:
-            chunks.append(chunk)
-            chunk = ""
-        chunk += line
-    chunks.append(chunk)
 
+    for entry in RESPONSES:
+        try:
+            safetrg = entry.get("safetrg", "n/a")
+            mention = entry.get("mention_required", False)
+            line = f"**Trigger**: `{safetrg}`\n"
+            line += f"**Mention Required**: `{mention}`\n\n"
+
+            if len(chunk + line) > 1900:
+                chunks.append(chunk)
+                chunk = ""
+            chunk += line
+
+        except Exception as e:
+            await ctx.send(f"Error reading entry: {e}")
+
+    chunks.append(chunk)
     for part in chunks:
         await ctx.send(part)
+
