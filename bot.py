@@ -16,6 +16,8 @@ from signal_handler import signal_command
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction, TextStyle
 
+
+
 load_dotenv()
 
 token = os.getenv("DISCORD_BOT_TOKEN")
@@ -47,10 +49,9 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
-    bot.tree.add_command(moderation.prune_cmd)
-    bot.tree.add_command(moderation.rams_cmd)
+    moderation.setup(bot.tree)
     bot.tree.add_command(signal_command)
-#   bot.tree.add_command(blackbird)   # Removed functionality for now - ren
+    bot.tree.add_command(blackbird)
     await bot.tree.sync()
     load_responses()
     bot.add_view(ApplicationView())

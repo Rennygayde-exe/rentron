@@ -25,6 +25,12 @@
       "id": "sniper",
       "triggers": ["Lyudmila Pavlichenko", "how many men have you killed?", "!Lyudmila_Pavlichenko"],
       "response": "Not men, Fascists... 309"
+    },
+    {
+      "id": "andy",
+      "triggers": ["stinky"],
+      "response": "BOYSMELL, IM A MAN, RUSHING COURSING RIVER, A MOUNTAIN OF STEEL!",
+      "mention_required": true
     }
   ]
 }
