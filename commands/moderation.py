@@ -9,7 +9,14 @@ import re
 import pandas as pd
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import time
+import psutil
+import platform
+from datetime import timedelta
+import sys
+import subprocess
 
+start_time = time.time()
 
 async def prune_attachments(
     interaction: discord.Interaction,
@@ -251,9 +258,81 @@ async def parse_zip(interaction: Interaction, file: Attachment):
 
     except Exception as e:
         await interaction.followup.send(f"Error: `{e}`", ephemeral=True)
+
+@app_commands.command(name="botstats", description="View bot uptime and stats.")
+async def botstats(interaction: Interaction):
+    now = time.time()
+    uptime_seconds = int(now - start_time)
+    uptime_str = str(timedelta(seconds=uptime_seconds))
+
+    process = psutil.Process()
+    mem = process.memory_info().rss / 1024 / 1024
+    system = platform.system()
+    python_ver = platform.python_version()
+
+    from bot import log_buffer
+    log_buffer.seek(0)
+    log_lines = log_buffer.read().splitlines()[-25:]
+    log_text = "\n".join(log_lines) or "No log entries available."
+
+    log_file = discord.File(io.BytesIO(log_text.encode()), filename="console_log.txt")
+
+    embed = discord.Embed(
+        title="Rentron Bot Stats",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Uptime", value=uptime_str, inline=True)
+    embed.add_field(name="Memory Usage", value=f"{mem:.2f} MB", inline=True)
+    embed.add_field(name="System", value=system, inline=True)
+    embed.add_field(name="Python", value=python_ver, inline=True)
+
+    await interaction.response.send_message(embed=embed, file=log_file)
+
+@app_commands.command(name="restart_bot", description="Restarts Rentron.")
+async def restart_bot(interaction: Interaction):
+    if not any(role.name in ("Admin", "S6 Professional", "Staff") for role in interaction.user.roles):
+        await interaction.response.send_message("Fuck off kiddo.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("NOOOOOOOOOOOOOOOOOOOOOOOO", ephemeral=True)
+    await interaction.client.close()
+    os.execv(sys.executable, ['python'] + sys.argv)
+
+@app_commands.command(name="ssh", description="Run a shell command")
+@app_commands.describe(command="The shell command to run")
+async def ssh(interaction: Interaction, command: str):
+    allowed_user_id = 669626735385640993
+
+    if interaction.user.id != allowed_user_id:
+        await interaction.response.send_message("WHO THE FUCK DO YOU THINK YOU ARE? IM TELLING MY MOM.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30
+        )
+        output = result.stdout.decode("utf-8")
+
+        if not output.strip():
+            output = "no output was logged."
+
+        await interaction.followup.send(f"```\n{output[:1900]}\n```")
+
+    except Exception as e:
+        await interaction.followup.send(f"Error:\n```{str(e)[:1900]}```")
+
 def setup(tree: app_commands.CommandTree):
     tree.add_command(prune_cmd)
     tree.add_command(rams_cmd)
     tree.add_command(massshadowgenerator)
     tree.add_command(sync_commands)
     tree.add_command(parse_zip)
+    tree.add_command(botstats)
+    tree.add_command(restart_bot)
+    tree.add_command(ssh)
