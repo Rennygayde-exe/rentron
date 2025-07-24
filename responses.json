@@ -31,6 +31,12 @@
       "triggers": ["stinky"],
       "response": "BOYSMELL, IM A MAN, RUSHING COURSING RIVER, A MOUNTAIN OF STEEL!",
       "mention_required": true
+    },
+    {
+      "id": "love_you_bot",
+      "triggers": ["bot.*love you", "love you.*bot"],
+      "response": "Aww, I love you too"
     }
+
   ]
 }

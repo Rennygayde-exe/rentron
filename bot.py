@@ -15,8 +15,16 @@ from commands.osint import blackbird
 from signal_handler import signal_command
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction, TextStyle
+import logging
+import io
 
-
+log_buffer = io.StringIO()
+handler = logging.StreamHandler(log_buffer)
+formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', "%Y-%m-%d %H:%M:%S")
+handler.setFormatter(formatter)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
 
 load_dotenv()
 
