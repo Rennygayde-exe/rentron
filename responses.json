@@ -36,6 +36,11 @@
       "id": "love_you_bot",
       "triggers": ["bot.*love you", "love you.*bot"],
       "response": "Aww, I love you too"
+    },
+    {
+      "id": "robin",
+      "triggers": ["rome.*fact", "fact.*rome", "rome", "romans", "Caligula"],
+      "response": "I don't know much on that, so I have outsourced this question to my good friend  <@491415164663365633> knows a lot, ask them!"
     }
 
   ]

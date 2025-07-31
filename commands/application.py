@@ -1,15 +1,37 @@
 import discord
 from discord.ext import commands
 from discord.utils import get
-from discord import app_commands
+from discord import app_commands, Interaction, Member
+from dotenv import load_dotenv
 import os
 import asyncio
 import io
 import csv
 import sqlite3
+import json 
 
-
+STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 submitted_applications = set()
+
+load_dotenv()
+STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
+
+def store_pending_application(message_id: int, user_id: int, data: dict):
+    conn = sqlite3.connect("applications.db")
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_applications (
+            message_id TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            data       TEXT    NOT NULL
+        )
+    """)
+    c.execute(
+        "INSERT OR REPLACE INTO pending_applications (message_id, user_id, data) VALUES (?, ?, ?)",
+        (str(message_id), user_id, json.dumps(data))
+    )
+    conn.commit()
+    conn.close()
 
 def has_pending_application(user_id: int) -> bool:
     conn = sqlite3.connect("applications.db")
@@ -24,14 +46,20 @@ def init_db():
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS applications (
-            user_id INTEGER PRIMARY KEY,
+            user_id    INTEGER PRIMARY KEY,
             submitted_at TEXT,
-            status TEXT NOT NULL
+            status     TEXT NOT NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pending_applications (
+            message_id INTEGER PRIMARY KEY,
+            user_id    INTEGER NOT NULL,
+            data       TEXT    NOT NULL
         )
     """)
     conn.commit()
     conn.close()
-
 
 def has_submitted(user_id: int) -> bool:
     conn = sqlite3.connect("applications.db")
@@ -146,10 +174,21 @@ class ApplicationSubmitButton(discord.ui.Button):
         conn = sqlite3.connect("applications.db")
         c = conn.cursor()
 
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS pending_applications (
+                message_id INTEGER PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                data       TEXT    NOT NULL
+            )
+        """)
+
         c.execute("SELECT status FROM applications WHERE user_id = ?", (interaction.user.id,))
         row = c.fetchone()
         if row and row[0] in ("pending", "approved"):
-            await interaction.response.send_message("You already have a submitted application that is still under review or approved. Please wait for staff to process it.", ephemeral=True)
+            await interaction.response.send_message(
+                "You already have an application under review or approved. Please wait for staff to process it.",
+                ephemeral=True
+            )
             conn.close()
             return
 
@@ -165,18 +204,29 @@ class ApplicationSubmitButton(discord.ui.Button):
         embed.set_footer(text=f"Applicant: {interaction.user} ({interaction.user.id})")
 
         if staff_channel:
-            await staff_channel.send(embed=embed, view=ApplicationReviewView(interaction.user.id, self.responses))
-
-        await interaction.response.send_message("Your application has been submitted!", ephemeral=True)
-
-        c.execute("INSERT OR REPLACE INTO applications (user_id, submitted_at, status) VALUES (?, ?, ?)", 
-                  (interaction.user.id, discord.utils.utcnow().isoformat(), 'pending'))
+            staff_role = discord.utils.get(guild.roles, name="Staff")
+            staff_ping = staff_role.mention if staff_role else ""
+            await staff_channel.send(
+                content=f"{staff_ping}",
+                embed=embed,
+                view=ApplicationReviewView(interaction.user.id, self.responses)
+            )
+        await interaction.response.send_message(
+            "Your application has been submitted! A staff member will review it shortly.",
+            ephemeral=True
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO applications (user_id, submitted_at, status) VALUES (?, ?, ?)",
+            (
+                interaction.user.id,
+                discord.utils.utcnow().isoformat(),
+                "pending"
+            )
+        )
         conn.commit()
         conn.close()
-
-
 class ApplicationReviewView(discord.ui.View):
-    def __init__(self, applicant_id, application_data):
+    def __init__(self, applicant_id: int, application_data: dict):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
         self.application_data = application_data
@@ -195,100 +245,113 @@ class ApplicationReviewView(discord.ui.View):
 
     async def handle_response(self, interaction: discord.Interaction, approved: bool):
         modal_title = "Approval Reason" if approved else "Denial Reason"
-        custom_id = "approve_reason" if approved else "deny_reason"
 
         class ReasonModal(discord.ui.Modal, title=modal_title):
             reason = discord.ui.TextInput(label="Reason", style=discord.TextStyle.paragraph)
 
             async def on_submit(modal_self, modal_interaction: discord.Interaction):
-                member = interaction.guild.get_member(self.applicant_id)
+                guild = interaction.guild
+                member = guild.get_member(self.applicant_id)
                 if not member:
-                    await modal_interaction.response.send_message("User not found.", ephemeral=True)
-                    return
+                    return await modal_interaction.response.send_message("User not found.", ephemeral=True)
 
                 if approved:
                     branch = self.application_data.get("branch_choice")
                     if branch:
-                        role = discord.utils.get(interaction.guild.roles, name=branch)
+                        role = discord.utils.get(guild.roles, name=branch)
                         if role:
                             await member.add_roles(role)
-                    msg = f"Your application has been approved!\n\n**Reason:** {modal_self.reason.value}"
+
+                    verified = discord.utils.get(guild.roles, name="Verified")
+                    pending  = discord.utils.get(guild.roles, name="Pending Application")
+                    if verified:
+                        await member.add_roles(verified)
+                    if pending:
+                        await member.remove_roles(pending)
+
+                    name     = self.application_data.get("name","").strip()
+                    pronouns = self.application_data.get("pronouns","").strip()
+                    if name and pronouns:
+                        try:
+                            await member.edit(nick=f"{name} ({pronouns})")
+                        except discord.Forbidden:
+                            pass
+
+                    dm_msg = f"Your application has been **approved**!\nReason: {modal_self.reason.value}"
                 else:
-                    msg = f"Your application has been denied.\n\n**Reason:** {modal_self.reason.value}"
+                    dm_msg = f"Your application has been **denied**.\nReason: {modal_self.reason.value}"
 
                 try:
-                    await member.send(msg)
-                    for child in self.children:
-                        child.disabled = True
-                        await modal_interaction.message.edit(view=self)
-                    await modal_interaction.response.send_message(f"{'Approved' if approved else 'Denied'} the application and notified the applicant.", ephemeral=True)
-                    csv_buffer = io.StringIO()
-                    writer = csv.writer(csv_buffer)
-                    writer.writerow(["Field", "Value"])
-                    for key, value in self.application_data.items():
-                        writer.writerow([key.replace("_", " ").title(), value])
-                    writer.writerow(["Decision", "Approved" if approved else "Denied"])
-                    writer.writerow(["Reason", modal_self.reason.value])
-                    writer.writerow(["Reviewed By", str(modal_interaction.user)])
-                    writer.writerow(["Applicant", str(member)])
-
-                    csv_buffer.seek(0)
-                    username = str(member).replace("#", "_")
-                    filename = f"{username}_application_log.csv"
-                    csv_file = discord.File(io.BytesIO(csv_buffer.read().encode()), filename=filename)
-
-                    log_channel_id = int(os.getenv("TICKET_LOG_CHANNEL_ID"))
-                    log_channel = interaction.guild.get_channel(log_channel_id)
-                    if log_channel:
-                        await log_channel.send(
-                            f"Application log for {member.mention} ({'Approved' if approved else 'Denied'} by {modal_interaction.user.mention})",
-                            file=csv_file
-                        )
-                    conn = sqlite3.connect("applications.db")
-                    c = conn.cursor()
-                    new_status = "approved" if approved else "denied"
-                    c.execute("INSERT OR REPLACE INTO applications (user_id, status) VALUES (?, ?)", (self.applicant_id, new_status))
-                    conn.commit()
-                    conn.close()
-
+                    await member.send(dm_msg)
                 except:
-                    await modal_interaction.response.send_message("Failed to DM the user, but decision was recorded.", ephemeral=True)
+                    pass
+
+                for child in self.children:
+                    child.disabled = True
+                await modal_interaction.message.edit(view=self)
+
+                await modal_interaction.response.send_message(
+                    f"Application {'approved' if approved else 'denied'} for {member.mention}.", ephemeral=True
+                )
+
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(["Field","Value"])
+                for k,v in self.application_data.items():
+                    w.writerow([k.replace("_"," ").title(), v])
+                w.writerow(["Decision", "Approved" if approved else "Denied"])
+                w.writerow(["Reason", modal_self.reason.value])
+                w.writerow(["Reviewed By", str(modal_interaction.user)])
+                w.writerow(["Applicant", str(member)])
+                buf.seek(0)
+
+                csv_file = discord.File(io.BytesIO(buf.read().encode()), filename=f"{member.id}_app_log.csv")
+                log_ch = guild.get_channel(int(os.getenv("TICKET_LOG_CHANNEL_ID", "0")))
+                if log_ch:
+                    await log_ch.send(
+                        f"Application log for {member.mention} — {'Approved' if approved else 'Denied'} by {modal_interaction.user.mention}",
+                        file=csv_file
+                    )
+
+                conn = sqlite3.connect("applications.db")
+                c = conn.cursor()
+                c.execute(
+                    "DELETE FROM pending_applications WHERE message_id = ?",
+                    (interaction.message.id,)
+                )
+                conn.commit()
+                conn.close()
 
         await interaction.response.send_modal(ReasonModal())
 
     async def open_ticket(self, interaction: discord.Interaction):
-        member = interaction.guild.get_member(self.applicant_id)
+        guild  = interaction.guild
+        member = guild.get_member(self.applicant_id)
         if not member:
-            await interaction.response.send_message("User not found.", ephemeral=True)
-            return
+            return await interaction.response.send_message("User not found.", ephemeral=True)
 
-        category_id = int(os.getenv("TICKET_CATEGORY_ID"))
-        category = interaction.guild.get_channel(category_id)
-        if not category or not isinstance(category, discord.CategoryChannel):
-            await interaction.response.send_message("Ticket section is missing!", ephemeral=True)
-            return
+        cat_id = int(os.getenv("TICKET_CATEGORY_ID", "0"))
+        category = guild.get_channel(cat_id)
+        if not isinstance(category, discord.CategoryChannel):
+            return await interaction.response.send_message("Ticket category missing.", ephemeral=True)
 
-        staff_role = discord.utils.get(interaction.guild.roles, name="Staff")
+        staff = discord.utils.get(guild.roles, name="Staff")
         overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
             member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
-            interaction.guild.me: discord.PermissionOverwrite(view_channel=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True),
         }
-        if staff_role:
-            overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True)
+        if staff:
+            overwrites[staff] = discord.PermissionOverwrite(view_channel=True)
 
-        ticket_channel = await interaction.guild.create_text_channel(
+        channel = await guild.create_text_channel(
             name=f"ticket-{member.name}",
             category=category,
             overwrites=overwrites,
-            topic=f"Application of {member.display_name}"
+            topic=f"Application ticket for {member}"
         )
-
-        await ticket_channel.send(
-            f"{member.mention}, a staff member will assist you shortly.",
-            view=TicketCloseView()
-        )
-        await interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+        await channel.send(f"{member.mention}, a staff member will be with you shortly.")
+        await interaction.response.send_message(f"Ticket created: {channel.mention}", ephemeral=True)
 
 class TicketCloseView(discord.ui.View):
     def __init__(self):
@@ -331,3 +394,152 @@ class TicketCloseView(discord.ui.View):
                 await interaction.channel.delete()
 
         await interaction.response.send_modal(CloseModal())
+
+@app_commands.command(
+    name="refreshview",
+    description="Re-attach the review buttons to an application message"
+)
+@app_commands.describe(
+    message_id="ID of the staff-review message to refresh"
+)
+async def refreshview(interaction: Interaction, message_id: str):
+    try:
+        msg_id = int(message_id)
+    except ValueError:
+        return await interaction.response.send_message(
+            "Invalid message ID.", ephemeral=True
+        )
+    staff_ch_id = int(os.getenv("STAFF_REVIEW_CHANNEL_ID"))
+    staff_ch    = interaction.client.get_channel(staff_ch_id)
+    if not staff_ch:
+        return await interaction.response.send_message(
+            "Channel Not Found.", ephemeral=True
+        )
+
+    conn = sqlite3.connect("applications.db")
+    c    = conn.cursor()
+    c.execute(
+      "SELECT user_id, data FROM pending_applications WHERE message_id = ?",
+      (msg_id,)
+    )
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        try:
+            msg = await staff_ch.fetch_message(msg_id)
+            emb = msg.embeds[0]
+            data = {}
+            for f in emb.fields:
+                data[f.name.lower().replace(" ", "_")] = f.value
+
+            footer = emb.footer.text or ""
+            uid = int(footer.split("(")[-1].rstrip(")"))
+
+            conn = sqlite3.connect("applications.db")
+            c    = conn.cursor()
+            c.execute(
+              "INSERT OR REPLACE INTO pending_applications(message_id,user_id,data) VALUES(?,?,?)",
+              (msg_id, uid, json.dumps(data))
+            )
+            conn.commit()
+            conn.close()
+
+            row = (uid, json.dumps(data))
+        except Exception as e:
+            return await interaction.response.send_message(
+                f"Could not backfill legacy data: {e}", ephemeral=True
+            )
+
+
+    applicant_id, data_json = row
+    application_data       = json.loads(data_json)
+    msg                    = await staff_ch.fetch_message(msg_id)
+    view                   = ApplicationReviewView(applicant_id, application_data)
+
+    try:
+        await msg.edit(view=view)
+        interaction.client.add_view(view, message_id=msg_id)
+        await interaction.response.send_message(
+            f"Re-attached buttons to message {msg_id}", ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"Failed to refresh view: {e}", ephemeral=True
+        )
+
+
+@app_commands.command(
+    name="list_pending",
+    description="List all users with pending applications"
+)
+async def list_pending(interaction: Interaction):
+    if not any(role.name == "Staff" for role in interaction.user.roles):
+        return await interaction.response.send_message(
+            "You don't have permission to do that.", ephemeral=True
+        )
+
+    conn = sqlite3.connect("applications.db")
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM applications WHERE status = 'pending'")
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        return await interaction.response.send_message(
+            "There are no pending applications.", ephemeral=True
+        )
+
+    lines = []
+    for (uid,) in rows:
+        member = interaction.guild.get_member(uid)
+        if member:
+            lines.append(f"• {member}")
+        else:
+            try:
+                user = await interaction.client.fetch_user(uid)
+                lines.append(f"• {user} (not in guild)")
+            except:
+                lines.append(f"• {uid} (unknown user)")
+
+    chunk = "\n".join(lines)
+    await interaction.response.send_message(
+        f"**Pending applications:**\n{chunk}", ephemeral=True
+    )
+
+@app_commands.command(
+    name="remove_pending",
+    description="Remove a user's pending application"
+)
+@app_commands.describe(
+    user="The user whose pending application you want to remove"
+)
+async def remove_pending(interaction: Interaction, user: Member):
+    if not any(role.name == "Staff" for role in interaction.user.roles):
+        return await interaction.response.send_message(
+            "You don't have permission to do that.", ephemeral=True
+        )
+
+    conn = sqlite3.connect("applications.db")
+    c = conn.cursor()
+    c.execute(
+        "DELETE FROM applications WHERE user_id = ? AND status = 'pending'",
+        (user.id,)
+    )
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+
+    if deleted:
+        await interaction.response.send_message(
+            f"Removed pending application for {user.mention}.", ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"No pending application found for {user.mention}.", ephemeral=True
+        )
+
+def setup(tree: app_commands.CommandTree):
+    tree.add_command(refreshview)
+    tree.add_command(list_pending)
+    tree.add_command(remove_pending)
