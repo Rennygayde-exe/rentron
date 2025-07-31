@@ -57,6 +57,17 @@
         "love you.*bot"
       ],
       "response": "Aww, I love you too"
+    },
+    {
+      "id": "robin",
+      "triggers": [
+        "rome.*fact",
+        "fact.*rome",
+        "rome",
+        "romans",
+        "Caligula"
+      ],
+      "response": "I don't know much on that, so I have outsourced this question to a friend who knows a lot more about it, ask around!"
     }
   ]
 }

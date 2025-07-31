@@ -12,3 +12,7 @@ applications.db
 blackbird/
 commands/__pycache__/scraper.cpython-313.pyc
 __pycache__/bot.cpython-313.pyc
+__pycache__/relay.cpython-313.pyc
+commands/__pycache__/pruning_logic.cpython-313.pyc
+last_prune.txt
+prune_schedule.json
