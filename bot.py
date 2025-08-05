@@ -1,6 +1,7 @@
 
 import os
 import signal
+import csv
 import asyncio
 import discord
 from discord.ext import commands, tasks
@@ -8,11 +9,11 @@ from dotenv import load_dotenv
 from utils.responses import load_responses, match_response
 from commands import general, moderation, application, osint
 from commands.application import init_db
-from commands.application import ApplicationView
+from commands.application import init_db, ApplicationView, TicketCloseView
 from discord import app_commands
 from commands import pruning_logic
 from commands.osint import blackbird
-from commands.pruning_logic import load_prune_schedule, save_prune_schedule, prune_attachments, LAST_PRUNE_FILE
+from commands.pruning_logic import load_prune_schedule, get_last_prune_time, set_last_prune_time, prune_attachments, UNIT_SECONDS
 from signal_handler import signal_command
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction, TextStyle
@@ -26,6 +27,7 @@ import datetime
 from datetime import datetime, timedelta, timezone
 from utils import DummyInteraction
 from commands.application import ApplicationReviewView
+from types import SimpleNamespace
 
 log_buffer = io.StringIO()
 handler = logging.StreamHandler(log_buffer)
@@ -38,6 +40,7 @@ logger.addHandler(handler)
 load_dotenv()
 BLACKBIRDLOGS_ID = int(os.getenv("BLACKBIRDLOGS_ID", 0))
 STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
+PRUNE_LOG_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 
 token = os.getenv("DISCORD_BOT_TOKEN")
 
@@ -46,15 +49,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 LAST_PRUNE_FILE = Path("last_prune.txt")
 
-def get_last_prune_time():
-    if LAST_PRUNE_FILE.exists():
-        with LAST_PRUNE_FILE.open() as f:
-            return datetime.fromisoformat(f.read().strip())
-    return None
-
-def set_last_prune_time(dt: datetime):
-    with LAST_PRUNE_FILE.open("w") as f:
-        f.write(dt.isoformat())
 
 def shutdown_handler(sig, frame):
     print("\n[main] Shutdown signal received.")
@@ -98,6 +92,7 @@ async def on_ready():
 
     # Application Button Refresh
     bot.add_view(ApplicationView())
+    bot.add_view(TicketCloseView())
 
     conn = sqlite3.connect("applications.db")
     c = conn.cursor()
@@ -105,6 +100,19 @@ async def on_ready():
     rows = c.fetchall()
     conn.close()
 
+    conn = sqlite3.connect("applications.db")
+    c = conn.cursor()
+    c.execute("SELECT message_id, channel_id FROM tickets")
+    for msg_id, chan_id in c.fetchall():
+        channel = bot.get_channel(chan_id)
+        if not channel:
+            continue
+        try:
+            await channel.fetch_message(msg_id)
+            bot.add_view(TicketCloseView(), message_id=msg_id)
+        except Exception:
+            pass
+    conn.close()
     staff_channel = bot.get_channel(STAFF_REVIEW_CHANNEL_ID)
     if staff_channel:
         for message_id, user_id, raw in rows:
@@ -127,60 +135,72 @@ async def on_ready():
 async def post_application(interaction: discord.Interaction):
     await interaction.response.send_message("Click below to apply!", view=ApplicationView())
 
-@tasks.loop(minutes=10)
+@tasks.loop(minutes=1)
 async def scheduled_prune():
     await bot.wait_until_ready()
 
-    now = datetime.now(timezone.utc)
-
-    try:
-        last_prune = get_last_prune_time() or now
-    except Exception as e:
-        print(f"[scheduled_prune] Failed to read last_prune.txt: {e}")
-        last_prune = now
-    config = load_prune_schedule()
-    interval = config.get("interval", 72)
-    unit = config.get("unit", "hours")
-    time_kwargs = {unit: interval} if unit != "years" else {"days": interval * 365}
-    next_run = last_prune + timedelta(**time_kwargs)
-    channel_id = config.get("channel_id")
-
-    if not channel_id:
+    cfg = load_prune_schedule()
+    chan_id = cfg.get("channel_id")
+    if not chan_id:
+        print("[scheduled_prune] no prune channel configured")
         return
 
-    channel = bot.get_channel(channel_id)
+    channel = bot.get_channel(chan_id)
+    log_chan = bot.get_channel(PRUNE_LOG_CHANNEL_ID)
     if not channel:
+        print(f"[scheduled_prune] prune channel {chan_id} not found")
         return
 
-    now = datetime.now(timezone.utc)
-    last_prune = get_last_prune_time()
+    amt  = cfg["interval"]
+    unit = cfg["unit"]
+    threshold = amt * UNIT_SECONDS.get(unit, 0)
 
-    if not last_prune or (now - last_prune).total_seconds() >= interval * 3600:
-        class DummyUser:
-            def __init__(self, guild):
-                self.roles = [type("Role", (), {"name": "Staff"})()]
-                self.mention = bot.user.mention
-                self.guild = guild
+    now  = datetime.now(timezone.utc)
+    last = get_last_prune_time()
 
-        dummy_interaction = type("DummyInteraction", (), {
-            "user": DummyUser(channel.guild),
-            "guild": channel.guild,
-            "followup": channel,
-            "response": type("Resp", (), {"is_done": lambda: True, "defer": lambda **kwargs: None})()
-        })()
+    if last is None:
+        print(f"[scheduled_prune] first run, pruning immediately")
+        do_prune = True
+    else:
+        elapsed = (now - last).total_seconds()
+        print(f"[scheduled_prune] elapsed={elapsed:.1f}s threshold={threshold:.1f}s")
+        do_prune = (elapsed >= threshold)
 
-        dummy_interaction = DummyInteraction()
-        deleted_count, csv_file = await prune_attachments(dummy_interaction, channel, 3, "days", "images")
-        set_last_prune_time(datetime.now(timezone.utc))
-        log_channel = bot.get_channel(BLACKBIRDLOGS_ID)
-        if log_channel:
-            await log_channel.send(
-                f"Scheduled prune completed in {channel.mention} at <t:{int(now.timestamp())}:f>. `{deleted_count}` messages deleted.",
-                file=csv_file if csv_file else None
-            )
+    if not do_prune:
+        return
 
+    class DummyUser:
+        def __init__(self, g): 
+            self.roles   = [type("R", (), {"name":"Staff"})()]
+            self.guild   = g
+            self.mention = bot.user.mention
 
+    class DummyResponse:
+        def is_done(self):      return True
+        async def defer(self, **_): pass
 
+    class DummyFollowup:
+        async def send(self, content=None, **kw):
+            return await channel.send(content, **{k:v for k,v in kw.items() if k!="ephemeral"})
+
+    dummy = type("DI", (), {})()
+    dummy.user     = DummyUser(channel.guild)
+    dummy.guild    = channel.guild
+    dummy.response = DummyResponse()
+    dummy.followup = DummyFollowup()
+
+    deleted = await prune_attachments(dummy, channel, amt, unit, "all")
+    set_last_prune_time(now)
+    print(f"[scheduled_prune] pruned {len(deleted)} items")
+
+    if log_chan and deleted:
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=["id","author","created","attachment","channel"])
+        writer.writeheader()
+        writer.writerows(deleted)
+        buf.seek(0)
+        f = discord.File(fp=io.BytesIO(buf.read().encode()), filename="prune_log.csv")
+        await log_chan.send(f"Auto-prune on {channel.mention}: deleted {len(deleted)} attachments.", file=f)
 @bot.event
 async def on_message(message):
     await bot.process_commands(message)

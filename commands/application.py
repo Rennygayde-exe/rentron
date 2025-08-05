@@ -58,6 +58,12 @@ def init_db():
             data       TEXT    NOT NULL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS tickets (
+            message_id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -130,7 +136,7 @@ class ApplicationTextInput(discord.ui.Button):
 class BranchDropdown(discord.ui.Select):
     def __init__(self, responses):
         self.responses = responses
-        options = [discord.SelectOption(label=b) for b in ["Army", "Navy", "Marines", "Air Force", "Coast Guard", "Space Force"]]
+        options = [discord.SelectOption(label=b) for b in ["Army", "Navy", "Marines", "Air Force", "Coast Guard", "Space Force", "Family"]]
         super().__init__(placeholder="Select your branch", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -241,7 +247,7 @@ class ApplicationReviewView(discord.ui.View):
 
     @discord.ui.button(label="Open Ticket", style=discord.ButtonStyle.primary, custom_id="application_ticket")
     async def ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.open_ticket(interaction)
+        await self.open_ticket(interaction, button)
 
     async def handle_response(self, interaction: discord.Interaction, approved: bool):
         modal_title = "Approval Reason" if approved else "Denial Reason"
@@ -324,40 +330,58 @@ class ApplicationReviewView(discord.ui.View):
 
         await interaction.response.send_modal(ReasonModal())
 
-    async def open_ticket(self, interaction: discord.Interaction):
-        guild  = interaction.guild
-        member = guild.get_member(self.applicant_id)
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.guild.get_member(self.applicant_id)
         if not member:
-            return await interaction.response.send_message("User not found.", ephemeral=True)
+            await interaction.response.send_message("User not found.", ephemeral=True)
+            return
 
-        cat_id = int(os.getenv("TICKET_CATEGORY_ID", "0"))
-        category = guild.get_channel(cat_id)
+        category_id = int(os.getenv("TICKET_CATEGORY_ID"))
+        category = interaction.guild.get_channel(category_id)
         if not isinstance(category, discord.CategoryChannel):
-            return await interaction.response.send_message("Ticket category missing.", ephemeral=True)
+            await interaction.response.send_message("Ticket section is missing!", ephemeral=True)
+            return
 
-        staff = discord.utils.get(guild.roles, name="Staff")
+        staff_role = discord.utils.get(interaction.guild.roles, name="Staff")
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
-            guild.me: discord.PermissionOverwrite(view_channel=True),
+            interaction.guild.me: discord.PermissionOverwrite(view_channel=True),
         }
-        if staff:
-            overwrites[staff] = discord.PermissionOverwrite(view_channel=True)
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True)
 
-        channel = await guild.create_text_channel(
+        ticket_channel = await interaction.guild.create_text_channel(
             name=f"ticket-{member.name}",
             category=category,
             overwrites=overwrites,
-            topic=f"Application ticket for {member}"
+            topic=f"Application of {member.display_name}"
         )
-        await channel.send(f"{member.mention}, a staff member will be with you shortly.")
-        await interaction.response.send_message(f"Ticket created: {channel.mention}", ephemeral=True)
+
+        await ticket_channel.send(
+            f"{member.mention}, a staff member will assist you shortly.",
+            view=TicketCloseView()
+        )
+
+        await interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
+
+        conn = sqlite3.connect("applications.db")
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR REPLACE INTO tickets (message_id, channel_id) VALUES (?, ?)",
+            (interaction.message.id, ticket_channel.id)
+        )
+        conn.commit()
+        conn.close()
 
 class TicketCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger)
+    @discord.ui.button(
+        label="Close Ticket",
+        style=discord.ButtonStyle.danger,
+        custom_id="ticket_close_button")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         class CloseModal(discord.ui.Modal, title="Close Ticket"):
             reason = discord.ui.TextInput(label="Reason for closing", style=discord.TextStyle.paragraph, required=True)
