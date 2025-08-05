@@ -83,10 +83,18 @@ def progress_bar(current: int, total: int, width: int = 30) -> str:
 
 @app_commands.command(name="sync", description="Force slash command sync.")
 @app_commands.checks.has_permissions(administrator=True)
-async def sync_commands(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    await interaction.client.tree.sync(guild=interaction.guild)
-    await interaction.followup.send("Synced commands.")
+async def sync_commands(interaction: Interaction, guild: str | None = None):
+    """If you pass a guild ID, syncs only that guild. Otherwise syncs globally."""
+    if guild:
+        try:
+            gid = int(guild)
+            await bot.tree.sync(guild=discord.Object(id=gid))
+            await interaction.response.send_message(f"Synced to guild {gid}", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"Failed: {e}", ephemeral=True)
+    else:
+        await bot.tree.sync()
+        await interaction.response.send_message("Synced global commands", ephemeral=True)
 
 
 @app_commands.command(name="parse_zip", description="Parse a zip of .txt files into a banlist JSON and Excel.")

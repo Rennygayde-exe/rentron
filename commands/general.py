@@ -2,12 +2,15 @@ from discord.ext import commands
 from utils.responses import load_responses, RESPONSES
 from discord.ui import View, Select, Modal, TextInput
 import discord
-from discord import app_commands, Interaction
+from discord import app_commands, Interaction, File, TextChannel
 from discord.ui import View, Select, Modal, TextInput
 import aiohttp
 import os
 import requests
 import openai
+from datetime import datetime, timezone, timedelta
+import io
+import csv
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import subprocess
@@ -143,30 +146,77 @@ async def fortune_cmd(interaction: Interaction):
 
     await interaction.followup.send(f"```\n{output}\n```")
 
+@app_commands.command(name="moo", description="Have the cow say your text")
+@app_commands.describe(text="Text to have the cow say")
+async def cowsay_cmd(interaction: Interaction, text: str):
+    await interaction.response.defer()
+    proc = subprocess.run(["cowsay", text], capture_output=True, text=True)
+    await interaction.followup.send(f"```{proc.stdout}```")
+
 @app_commands.command(
-    name="moo",
-    description="Moooooooo"
+    name="trace_act",
+    description="Audit members inactive for N days and export CSV"
 )
 @app_commands.describe(
-    text="Mooooo"
+    days="Number of days of inactivity",
+    log_channel="Where to send the CSV"
 )
-async def cowsay_cmd(interaction: Interaction, text: str):
-    await interaction.response.defer(thinking=True)
-    try:
-        proc = subprocess.run(
-            ["cowsay", text],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-        )
-        output = proc.stdout.strip() or proc.stderr.strip() or "No output."
-    except Exception as e:
-        output = f"No Moos {e}"
+@app_commands.checks.has_permissions(administrator=True)
+async def trace_act(interaction: Interaction, days: int, log_channel: TextChannel):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    await interaction.followup.send(f"```\n{output}\n```")
+    members = guild.members
+    total = len(members)
+    checked = 0
+    inactive = []
+
+    bar = "[░░░░░░░░░░] 0%"
+    progress_msg = await interaction.followup.send(f"Scanning members… {bar}", ephemeral=True)
+
+    for member in members:
+        last_seen = None
+        for channel in guild.text_channels:
+            if not channel.permissions_for(guild.me).read_message_history:
+                continue
+            try:
+                async for msg in channel.history(limit=100, after=cutoff):
+                    if msg.author.id == member.id:
+                        last_seen = msg.created_at
+                        break
+                if last_seen:
+                    break
+            except discord.Forbidden:
+                continue
+
+        if last_seen is None:
+            inactive.append(member)
+
+        checked += 1
+        if checked % max(1, total // 20) == 0 or checked == total:
+            percent = int(checked / total * 100)
+            filled = percent // 10
+            bar = "[" + "█"*filled + "░"*(10-filled) + f"] {percent}%"
+            await progress_msg.edit(content=f"Scanning members… {bar}")
+
+        await asyncio.sleep(0.05)
+
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    writer.writerow(["Member", "ID", "Status"])
+    for m in members:
+        status = "Inactive" if m in inactive else "Active"
+        writer.writerow([str(m), m.id, status])
+    csv_buffer.seek(0)
+
+    file = File(fp=io.BytesIO(csv_buffer.read().encode()), filename="inactive_members.csv")
+    await log_channel.send(f"Inactive (> {days}d): {len(inactive)}/{total}", file=file)
+    await progress_msg.edit(content="Audit complete!")
 
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
     tree.add_command(fortune_cmd)
     tree.add_command(cowsay_cmd)
+    tree.add_command(trace_act)
+
