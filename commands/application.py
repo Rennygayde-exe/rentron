@@ -123,17 +123,16 @@ class SinglePageApplication(discord.ui.View):
     def __init__(self, responses):
         super().__init__(timeout=None)
         self.responses = responses
-        self.add_item(ApplicationTextInput("1. Preferred Name", "name", "First names only", required=True))
-        self.add_item(ApplicationTextInput("2. Pronouns", "pronouns", "she/her, he/him, etc.", required=True))
+        self.add_item(ApplicationTextInput("1. Preferred Name", "name", "First names only", required=True, row=0))
+        self.add_item(ApplicationTextInput("2. Pronouns", "pronouns", "she/her, he/him, etc.", required=True, row=0))
+        self.add_item(ApplicationTextInput("3. Referral Source", "refer", "Where did you hear about us?", required=True, row=0))
         self.add_item(BranchDropdown(responses))
         self.add_item(StatusDropdown(responses))
-        self.add_item(ApplicationTextInput("3. Referral Source", "refer", "Where did you hear about us?", required=True))
         self.add_item(ApplicationSubmitButton(responses))
 
-
 class ApplicationTextInput(discord.ui.Button):
-    def __init__(self, label, custom_id, placeholder, required=False):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary)
+    def __init__(self, label, custom_id, placeholder, required=False, row=None):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, row=row)
         self.custom_id = custom_id
         self.placeholder = placeholder
         self.required = required
@@ -151,18 +150,14 @@ class ApplicationTextInput(discord.ui.Button):
 class BranchDropdown(discord.ui.Select):
     def __init__(self, responses):
         self.responses = responses
-        options = [discord.SelectOption(label=b) for b in ["Army", "Navy", "Marines", "Air Force", "Coast Guard", "Space Force", "Family"]]
-        super().__init__(placeholder="Select your branch", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        self.view.responses["branch_choice"] = self.values[0]
-        await interaction.response.defer()
+        options = [discord.SelectOption(label=b) for b in ["Army","Navy","Marines","Air Force","Coast Guard","Space Force","Family"]]
+        super().__init__(placeholder="Select your branch", options=options, row=1)
 
 class StatusDropdown(discord.ui.Select):
     def __init__(self, responses):
         self.responses = responses
-        options = [discord.SelectOption(label=s) for s in ["Current", "Former", "DEP/Future Warrior"]]
-        super().__init__(placeholder="Select your status", options=options)
+        options = [discord.SelectOption(label=s) for s in ["Current","Former","DEP/Future Warrior"]]
+        super().__init__(placeholder="Select your status", options=options, row=2)
 
     async def callback(self, interaction: discord.Interaction):
         self.view.responses["status_choice"] = self.values[0]
@@ -188,7 +183,7 @@ class BackButton(discord.ui.Button):
 
 class ApplicationSubmitButton(discord.ui.Button):
     def __init__(self, responses):
-        super().__init__(label="Submit", style=discord.ButtonStyle.success)
+        super().__init__(label="Submit", style=discord.ButtonStyle.success, row=3)
         self.responses = responses
 
     async def callback(self, interaction: discord.Interaction):
