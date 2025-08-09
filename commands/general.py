@@ -2,7 +2,10 @@ from discord.ext import commands
 from utils.responses import load_responses, RESPONSES
 from discord.ui import View, Select, Modal, TextInput
 import discord
-from discord import app_commands, Interaction, File, TextChannel
+from io import BytesIO
+from PIL import Image
+import random
+from discord import app_commands, Interaction, File, TextChannel, Member
 from discord.ui import View, Select, Modal, TextInput
 import aiohttp
 import os
@@ -18,6 +21,9 @@ load_dotenv()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
+
+_FRAMES = 30
+_FRAME_DURATION = 60  # ms per frame
 
 def create_github_issue(title, body, labels=[]):
     import requests
@@ -214,9 +220,83 @@ async def trace_act(interaction: Interaction, days: int, log_channel: TextChanne
     await log_channel.send(f"Inactive (> {days}d): {len(inactive)}/{total}", file=file)
     await progress_msg.edit(content="Audit complete!")
 
+
+@app_commands.command(
+    name="rennygadetarget",
+    description="Roko's Basilisk"
+)
+@app_commands.describe(
+    user="Who we dusting??"
+)
+async def rennygadetarget(
+    interaction: Interaction,
+    user: Member
+):
+    await interaction.response.defer()
+
+    avatar_url = user.display_avatar.with_format("png").with_size(256).url
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(str(avatar_url)) as resp:
+            data = await resp.read()
+
+    img = Image.open(BytesIO(data)).convert("RGBA")
+    w, h = img.size
+    pixels = img.load()
+
+    tile_size = 32
+    w_tiles = (w + tile_size - 1) // tile_size
+    h_tiles = (h + tile_size - 1) // tile_size
+
+    tiles = []
+    for ty in range(h_tiles):
+        for tx in range(w_tiles):
+            x0, y0 = tx * tile_size, ty * tile_size
+            box = (x0, y0, min(x0 + tile_size, w), min(y0 + tile_size, h))
+            tile_img = img.crop(box)
+            start_frame = random.randint(0, _FRAMES - 1)
+            tiles.append({
+                "img": tile_img,
+                "orig_pos": (x0, y0),
+                "start": start_frame,
+            })
+
+    frames = []
+    gravity = tile_size / _FRAMES  # pixels per frame after start
+
+    for frame_i in range(_FRAMES):
+        canvas = Image.new("RGBA", (w, h))
+        for t in tiles:
+            ox, oy = t["orig_pos"]
+            if frame_i < t["start"]:
+                canvas.paste(t["img"], (ox, oy), t["img"])
+            else:
+                dy = int((frame_i - t["start"]) * gravity)
+                new_y = oy + dy
+                if new_y < h:
+                    canvas.paste(t["img"], (ox, new_y), t["img"])
+        frames.append(canvas)
+
+    buffer = BytesIO()
+    frames[0].save(
+        buffer,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=_FRAME_DURATION,
+        loop=0,
+        disposal=2,
+        transparency=0
+    )
+    buffer.seek(0)
+
+    await interaction.followup.send(
+        content=f"{user.mention}, you’ve been dusted!",
+        file=File(fp=buffer, filename="disintegrate.gif")
+    )
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
     tree.add_command(fortune_cmd)
     tree.add_command(cowsay_cmd)
     tree.add_command(trace_act)
+    tree.add_command(rennygadetarget)
 

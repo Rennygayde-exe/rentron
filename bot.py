@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from utils.responses import load_responses, match_response
-from commands import general, moderation, application, osint
+from commands import general, moderation, application, osint, music
 from commands.application import init_db
 from commands.application import init_db, ApplicationView, TicketCloseView
 from discord import app_commands
@@ -28,6 +28,16 @@ from datetime import datetime, timedelta, timezone
 from utils import DummyInteraction
 from commands.application import ApplicationReviewView
 from types import SimpleNamespace
+import discord.opus
+import commands.music as music
+
+try:
+    import nacl
+except ImportError:
+    print("PyNaCl is not installed!")
+else:
+    print("PyNaCl is installed.")
+
 
 log_buffer = io.StringIO()
 handler = logging.StreamHandler(log_buffer)
@@ -63,25 +73,28 @@ def shutdown_handler(sig, frame):
 signal.signal(signal.SIGINT, shutdown_handler)
 
 async def load_extensions():
-    await bot.load_extension("commands.osint")
+    await bot.load_extension("commands.music")
+    await bot.load_extension("commands.e2simulator")
+    await bot.load_extension("commands.ssh")
 async def main():
     async with bot:
-        await load_extensions()
         await bot.start(TOKEN)
 @bot.event
 async def on_ready():
     init_db()
     print(f"Logged in as {bot.user}")
+    discord.opus.load_opus("/usr/lib/libopus.so")
+    print(">>> Opus loaded?", discord.opus.is_loaded())
 
     #Start Task Loops
     scheduled_prune.start()
-
     # Command Reg
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     general.setup(bot.tree)
     moderation.setup(bot.tree)
     application.setup(bot.tree)
+    await load_extensions()
     bot.tree.add_command(signal_command)
     bot.tree.add_command(blackbird)
     pruning_logic.setup(bot.tree)
@@ -135,7 +148,7 @@ async def on_ready():
 async def post_application(interaction: discord.Interaction):
     await interaction.response.send_message("Click below to apply!", view=ApplicationView())
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=30)
 async def scheduled_prune():
     await bot.wait_until_ready()
 
