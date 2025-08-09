@@ -8,16 +8,31 @@ import asyncio
 import io
 import csv
 import sqlite3
-import json 
+import json
+from pathlib import Path
 
+load_dotenv()
+BASE_DIR = Path(__file__).resolve().parents[1]
+DB_PATH = str(Path(os.getenv("APPLICATIONS_DB") or (BASE_DIR / "applications.db")))
 STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 submitted_applications = set()
 
 load_dotenv()
 STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 
+
+def delete_pending(*, user_id: int | None = None, message_id: int | None = None) -> None:
+    if not user_id and not message_id:
+        return
+    with sqlite3.connect(DB_PATH) as con:
+        if user_id:
+            con.execute("DELETE FROM pending_applications WHERE user_id = ?", (user_id,))
+        if message_id:
+            con.execute("DELETE FROM pending_applications WHERE message_id = ?", (message_id,))
+        con.commit()
+
 def store_pending_application(message_id: int, user_id: int, data: dict):
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS pending_applications (
@@ -34,7 +49,7 @@ def store_pending_application(message_id: int, user_id: int, data: dict):
     conn.close()
 
 def has_pending_application(user_id: int) -> bool:
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT * FROM applications WHERE user_id = ?", (user_id,))
     result = c.fetchone()
@@ -42,7 +57,7 @@ def has_pending_application(user_id: int) -> bool:
     return result is not None
 
 def init_db():
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
         CREATE TABLE IF NOT EXISTS applications (
@@ -68,7 +83,7 @@ def init_db():
     conn.close()
 
 def has_submitted(user_id: int) -> bool:
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT 1 FROM applications WHERE user_id = ?", (user_id,))
     result = c.fetchone()
@@ -76,14 +91,14 @@ def has_submitted(user_id: int) -> bool:
     return result is not None
 
 def mark_as_submitted(user_id: int):
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO applications (user_id) VALUES (?)", (user_id,))
     conn.commit()
     conn.close()
 
 def clear_submission(user_id: int):
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
     conn.commit()
@@ -177,7 +192,7 @@ class ApplicationSubmitButton(discord.ui.Button):
         self.responses = responses
 
     async def callback(self, interaction: discord.Interaction):
-        conn = sqlite3.connect("applications.db")
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
         c.execute("""
@@ -212,11 +227,12 @@ class ApplicationSubmitButton(discord.ui.Button):
         if staff_channel:
             staff_role = discord.utils.get(guild.roles, name="Staff")
             staff_ping = staff_role.mention if staff_role else ""
-            await staff_channel.send(
+            review_msg = await staff_channel.send(
                 content=f"{staff_ping}",
                 embed=embed,
                 view=ApplicationReviewView(interaction.user.id, self.responses)
             )
+            store_pending_application(review_msg.id, interaction.user.id, self.responses)
         await interaction.response.send_message(
             "Your application has been submitted! A staff member will review it shortly.",
             ephemeral=True
@@ -277,6 +293,7 @@ class ApplicationReviewView(discord.ui.View):
 
                     name     = self.application_data.get("name","").strip()
                     pronouns = self.application_data.get("pronouns","").strip()
+                    delete_pending(user_id=member.id, message_id=interaction.message.id)
                     if name and pronouns:
                         try:
                             await member.edit(nick=f"{name} ({pronouns})")
@@ -299,6 +316,19 @@ class ApplicationReviewView(discord.ui.View):
                 await modal_interaction.response.send_message(
                     f"Application {'approved' if approved else 'denied'} for {member.mention}.", ephemeral=True
                 )
+                with sqlite3.connect(DB_PATH) as con:
+                    con.execute(
+                        "UPDATE applications SET status = ? WHERE user_id = ?",
+                        ("approved" if approved else "denied", member.id)
+                    )
+                    con.execute(
+                        "DELETE FROM pending_applications WHERE message_id = ?",
+                        (interaction.message.id,)
+                    )
+                    con.commit()
+                for child in self.children:
+                    child.disabled = True
+                await interaction.message.edit(view=self)
 
                 buf = io.StringIO()
                 w = csv.writer(buf)
@@ -319,7 +349,7 @@ class ApplicationReviewView(discord.ui.View):
                         file=csv_file
                     )
 
-                conn = sqlite3.connect("applications.db")
+                conn = sqlite3.connect(DB_PATH)
                 c = conn.cursor()
                 c.execute(
                     "DELETE FROM pending_applications WHERE message_id = ?",
@@ -365,7 +395,7 @@ class ApplicationReviewView(discord.ui.View):
 
         await interaction.response.send_message(f"Ticket created: {ticket_channel.mention}", ephemeral=True)
 
-        conn = sqlite3.connect("applications.db")
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute(
             "INSERT OR REPLACE INTO tickets (message_id, channel_id) VALUES (?, ?)",
@@ -440,7 +470,7 @@ async def refreshview(interaction: Interaction, message_id: str):
             "Channel Not Found.", ephemeral=True
         )
 
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c    = conn.cursor()
     c.execute(
       "SELECT user_id, data FROM pending_applications WHERE message_id = ?",
@@ -460,7 +490,7 @@ async def refreshview(interaction: Interaction, message_id: str):
             footer = emb.footer.text or ""
             uid = int(footer.split("(")[-1].rstrip(")"))
 
-            conn = sqlite3.connect("applications.db")
+            conn = sqlite3.connect(DB_PATH)
             c    = conn.cursor()
             c.execute(
               "INSERT OR REPLACE INTO pending_applications(message_id,user_id,data) VALUES(?,?,?)",
@@ -503,7 +533,7 @@ async def list_pending(interaction: Interaction):
             "You don't have permission to do that.", ephemeral=True
         )
 
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT user_id FROM applications WHERE status = 'pending'")
     rows = c.fetchall()
@@ -544,7 +574,7 @@ async def remove_pending(interaction: Interaction, user: Member):
             "You don't have permission to do that.", ephemeral=True
         )
 
-    conn = sqlite3.connect("applications.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         "DELETE FROM applications WHERE user_id = ? AND status = 'pending'",
