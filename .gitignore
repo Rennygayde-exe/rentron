@@ -16,3 +16,7 @@ __pycache__/relay.cpython-313.pyc
 commands/__pycache__/pruning_logic.cpython-313.pyc
 last_prune.txt
 prune_schedule.json
+Archive.zip
+commands/__pycache__/e2simulator.cpython-313.pyc
+commands/__pycache__/music.cpython-313.pyc
+commands/__pycache__/ssh.cpython-313.pyc

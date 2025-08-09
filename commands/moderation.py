@@ -180,36 +180,6 @@ async def restart_bot(interaction: Interaction):
     await interaction.client.close()
     os.execv(sys.executable, ['python'] + sys.argv)
 
-@app_commands.command(name="ssh", description="Run a shell command")
-@app_commands.describe(command="The shell command to run")
-async def ssh(interaction: Interaction, command: str):
-    allowed_user_id = 669626735385640993
-
-    if interaction.user.id != allowed_user_id:
-        await interaction.response.send_message("WHO THE FUCK DO YOU THINK YOU ARE? IM TELLING MY MOM.", ephemeral=True)
-        return
-
-    await interaction.response.defer(thinking=True)
-
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=30
-        )
-        output = result.stdout.decode("utf-8")
-
-        if not output.strip():
-            output = "no output was logged."
-
-        await interaction.followup.send(f"```\n{output[:1900]}\n```")
-
-    except Exception as e:
-        await interaction.followup.send(f"Error:\n```{str(e)[:1900]}```")
-
-
 
 def setup(tree: app_commands.CommandTree):
     tree.add_command(massshadowgenerator)
@@ -217,4 +187,3 @@ def setup(tree: app_commands.CommandTree):
     tree.add_command(parse_zip)
     tree.add_command(botstats)
     tree.add_command(restart_bot)
-    tree.add_command(ssh)
