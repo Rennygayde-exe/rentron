@@ -76,6 +76,12 @@ async def load_extensions():
     await bot.load_extension("commands.music")
     await bot.load_extension("commands.e2simulator")
     await bot.load_extension("commands.ssh")
+    await bot.load_extension("commands.tts")
+    await bot.load_extension("commands.admin_reload")
+    await bot.load_extension("commands.moderation")
+    await bot.load_extension("commands.application")
+    
+
 async def main():
     async with bot:
         await bot.start(TOKEN)
@@ -92,8 +98,6 @@ async def on_ready():
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     general.setup(bot.tree)
-    moderation.setup(bot.tree)
-    application.setup(bot.tree)
     await load_extensions()
     bot.tree.add_command(signal_command)
     bot.tree.add_command(blackbird)
@@ -142,11 +146,6 @@ async def on_ready():
                 print(f"Failed to reattach review view for {message_id}: {e}")
 
     print("Bot is ready and applications work!.")
-
-@bot.tree.command(name="post_application", description="Post the application button")
-@app_commands.checks.has_permissions(administrator=True)
-async def post_application(interaction: discord.Interaction):
-    await interaction.response.send_message("Click below to apply!", view=ApplicationView())
 
 @tasks.loop(minutes=30)
 async def scheduled_prune():
