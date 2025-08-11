@@ -11,9 +11,7 @@ from commands import general, moderation, application, osint, music
 from commands.application import init_db
 from commands.application import init_db, ApplicationView, TicketCloseView
 from discord import app_commands
-from commands import pruning_logic
 from commands.osint import blackbird
-from commands.pruning_logic import load_prune_schedule, get_last_prune_time, set_last_prune_time, prune_attachments, UNIT_SECONDS
 from signal_handler import signal_command
 from discord.ui import View, Button, Modal, TextInput
 from discord import Interaction, TextStyle
@@ -29,7 +27,7 @@ from utils import DummyInteraction
 from commands.application import ApplicationReviewView
 from types import SimpleNamespace
 import discord.opus
-import commands.music as music
+import pkgutil, importlib
 
 try:
     import nacl
@@ -80,6 +78,8 @@ async def load_extensions():
     await bot.load_extension("commands.admin_reload")
     await bot.load_extension("commands.moderation")
     await bot.load_extension("commands.application")
+    await bot.load_extension("commands.pruning_logic")
+    
     
 
 async def main():
@@ -92,8 +92,6 @@ async def on_ready():
     discord.opus.load_opus("/usr/lib/libopus.so")
     print(">>> Opus loaded?", discord.opus.is_loaded())
 
-    #Start Task Loops
-    scheduled_prune.start()
     # Command Reg
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
@@ -101,7 +99,6 @@ async def on_ready():
     await load_extensions()
     bot.tree.add_command(signal_command)
     bot.tree.add_command(blackbird)
-    pruning_logic.setup(bot.tree)
     await bot.tree.sync()
 
     # Load responses
@@ -147,72 +144,7 @@ async def on_ready():
 
     print("Bot is ready and applications work!.")
 
-@tasks.loop(minutes=30)
-async def scheduled_prune():
-    await bot.wait_until_ready()
 
-    cfg = load_prune_schedule()
-    chan_id = cfg.get("channel_id")
-    if not chan_id:
-        print("[scheduled_prune] no prune channel configured")
-        return
-
-    channel = bot.get_channel(chan_id)
-    log_chan = bot.get_channel(PRUNE_LOG_CHANNEL_ID)
-    if not channel:
-        print(f"[scheduled_prune] prune channel {chan_id} not found")
-        return
-
-    amt  = cfg["interval"]
-    unit = cfg["unit"]
-    threshold = amt * UNIT_SECONDS.get(unit, 0)
-
-    now  = datetime.now(timezone.utc)
-    last = get_last_prune_time()
-
-    if last is None:
-        print(f"[scheduled_prune] first run, pruning immediately")
-        do_prune = True
-    else:
-        elapsed = (now - last).total_seconds()
-        print(f"[scheduled_prune] elapsed={elapsed:.1f}s threshold={threshold:.1f}s")
-        do_prune = (elapsed >= threshold)
-
-    if not do_prune:
-        return
-
-    class DummyUser:
-        def __init__(self, g): 
-            self.roles   = [type("R", (), {"name":"Staff"})()]
-            self.guild   = g
-            self.mention = bot.user.mention
-
-    class DummyResponse:
-        def is_done(self):      return True
-        async def defer(self, **_): pass
-
-    class DummyFollowup:
-        async def send(self, content=None, **kw):
-            return await channel.send(content, **{k:v for k,v in kw.items() if k!="ephemeral"})
-
-    dummy = type("DI", (), {})()
-    dummy.user     = DummyUser(channel.guild)
-    dummy.guild    = channel.guild
-    dummy.response = DummyResponse()
-    dummy.followup = DummyFollowup()
-
-    deleted = await prune_attachments(dummy, channel, amt, unit, "all")
-    set_last_prune_time(now)
-    print(f"[scheduled_prune] pruned {len(deleted)} items")
-
-    if log_chan and deleted:
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=["id","author","created","attachment","channel"])
-        writer.writeheader()
-        writer.writerows(deleted)
-        buf.seek(0)
-        f = discord.File(fp=io.BytesIO(buf.read().encode()), filename="prune_log.csv")
-        await log_chan.send(f"Auto-prune on {channel.mention}: deleted {len(deleted)} attachments.", file=f)
 @bot.event
 async def on_message(message):
     await bot.process_commands(message)
