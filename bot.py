@@ -80,6 +80,7 @@ async def load_extensions():
     await bot.load_extension("commands.application")
     await bot.load_extension("commands.pruning_logic")
     await bot.load_extension("commands.say")
+    await bot.load_extension("commands.keyword_alerts")
     
     
 

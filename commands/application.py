@@ -196,9 +196,19 @@ class ApplicationView(discord.ui.View):
             await interaction.response.send_message("Enable DMs and try again.", ephemeral=True)
 
 class ApplicationReviewView(discord.ui.View):
-    def __init__(self, applicant_id:int, data:dict):
-        super().__init__(timeout=None); self.applicant_id = applicant_id; self.data = data
-
+    def __init__(
+        self,
+        applicant_id: int,
+        data: dict | None = None,
+        *,
+        application_data: dict | None = None,
+        review_msg_id: int | None = None,
+        **_
+    ):
+        super().__init__(timeout=None)
+        self.applicant_id = int(applicant_id)
+        self.data = data or application_data or {}
+        self.review_msg_id = review_msg_id
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="application_approve")
     async def approve(self, i: discord.Interaction, _: discord.ui.Button):
         await self._decide(i, True)

@@ -1,0 +1,33 @@
+{
+  "guilds": {
+    "663035397416419351": {
+      "_seq": 3,
+      "rules": [
+        {
+          "id": 1,
+          "phrase": "kill my self",
+          "match": "regex",
+          "case": false,
+          "channel_id": 1303927725815500860,
+          "scope_channel_id": null,
+          "include_bots": false,
+          "cooldown": 20,
+          "created_by": "669626735385640993",
+          "created_at": "2025-08-13T01:25:52.811992+00:00"
+        },
+        {
+          "id": 2,
+          "phrase": "faggot",
+          "match": "contains",
+          "case": false,
+          "channel_id": 1303927725815500860,
+          "scope_channel_id": null,
+          "include_bots": false,
+          "cooldown": 20,
+          "created_by": "669626735385640993",
+          "created_at": "2025-08-13T01:28:04.008384+00:00"
+        }
+      ]
+    }
+  }
+}
