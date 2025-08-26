@@ -13,7 +13,7 @@ UNIT_SECONDS = {
     "days":    86400,
     "weeks":   604800,
 }
-IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+IMG_EXTS = (".png",".jpg",".jpeg",".gif",".bmp",".webp",".heic",".heif",".avif")
 
 class Cleanup(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -62,53 +62,67 @@ class Cleanup(commands.Cog):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
+
+        perms = getattr(interaction.user, "guild_permissions", None)
+        has_manage = bool(getattr(perms, "manage_messages", False))
+        if not has_manage and not any(r.name == "Staff" for r in getattr(interaction.user, "roles", [])):
+            await interaction.followup.send("No permission.", ephemeral=True)
+            return []
+
         cutoff = datetime.now(timezone.utc) - timedelta(**{unit: amount})
-        deleted: list[dict] = []
 
-        await interaction.followup.send(
-            f"Scanning {channel.mention} for `{attach_type}` attachments older than {amount} {unit}…",
-            ephemeral=True,
-        )
-        progress = await interaction.followup.send("Progress: 0%", ephemeral=True)
+        deleted_rows: list[dict] = []
+        deleted_count = failed = checked = 0
+        progress = await interaction.followup.send("Scanning… 0 checked / 0 deleted", ephemeral=True)
 
-        history = [m async for m in channel.history(limit=2000, oldest_first=True)]
-        total = len(history) or 1
-
-        for i, msg in enumerate(history, start=1):
-            if (i % 25 == 0) or i == total:
-                await progress.edit(content=f"Progress: {int(i/total*100)}%")
-            if msg.created_at >= cutoff:
-                continue
+        async for msg in channel.history(limit=None, before=cutoff, oldest_first=False):
+            checked += 1
             if not msg.attachments:
+                if checked % 50 == 0:
+                    await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
                 continue
-            if attach_type == "images" and not any(a.filename.lower().endswith(IMAGE_EXTS) for a in msg.attachments):
-                continue
+
+            if attach_type == "images":
+                if not any(
+                    (a.content_type or "").startswith("image/") or (a.filename or "").lower().endswith(IMG_EXTS)
+                    for a in msg.attachments
+                ):
+                    if checked % 50 == 0:
+                        await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
+                    continue
+
+            att_url = msg.attachments[0].url if msg.attachments else ""
             try:
                 await msg.delete()
-                first_att = next((a.url for a in msg.attachments), None)
-                deleted.append({
+                deleted_rows.append({
                     "id":        str(msg.id),
                     "author":    f"{msg.author} ({msg.author.id})",
-                    "created":   msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
-                    "attachment": first_att,
-                    "channel":   channel.name
+                    "created":   msg.created_at.isoformat(),
+                    "attachment": att_url,
+                    "channel":   (getattr(msg.channel, "name", None) or str(msg.channel.id)),
                 })
+                deleted_count += 1
                 await asyncio.sleep(0.7)
-            except:
-                pass
+            except Exception:
+                failed += 1
 
-        await progress.edit(content=f"Done—deleted {len(deleted)} item(s).")
+            if checked % 50 == 0:
+                await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
 
-        if deleted:
+        await progress.edit(content=f"Done—deleted {deleted_count} item(s). Failed: {failed}")
+
+        if deleted_rows:
             buf = io.StringIO()
             w = csv.DictWriter(buf, fieldnames=["id", "author", "created", "attachment", "channel"])
-            w.writeheader(); w.writerows(deleted); buf.seek(0)
+            w.writeheader()
+            w.writerows(deleted_rows)
+            buf.seek(0)
             file = discord.File(io.BytesIO(buf.read().encode()), filename=f"pruned_{channel.id}.csv")
-            summary = f"Pruned {len(deleted)} message(s) in {channel.mention} older than {amount} {unit}."
+            summary = f"Pruned {len(deleted_rows)} message(s) in {channel.mention} older than {amount} {unit}."
             if log_channel:
                 try:
                     await log_channel.send(summary, file=file)
-                except:
+                except Exception:
                     await interaction.followup.send("Failed to post results to the log channel.", ephemeral=True)
             else:
                 await interaction.followup.send(summary, file=file, ephemeral=True)
@@ -116,7 +130,8 @@ class Cleanup(commands.Cog):
             await interaction.followup.send("No messages matched.", ephemeral=True)
 
         self._set_last(datetime.now(timezone.utc))
-        return deleted
+        return deleted_rows
+
 
     # Background auto-prune loop (every 30 min)
     @tasks.loop(minutes=30)

@@ -17,6 +17,8 @@ import csv
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import subprocess
+import asyncio, re, fnmatch
+from typing import Literal
 load_dotenv()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -24,6 +26,19 @@ GITHUB_REPO = os.getenv("GITHUB_REPO")
 
 _FRAMES = 30
 _FRAME_DURATION = 60  # ms per frame
+
+
+def _attach_match(name: str, needle: str, mode: str, cs: bool) -> bool:
+    if not cs:
+        name = name.lower(); needle = needle.lower()
+    if mode == "exact": return name == needle
+    if mode == "contains": return needle in name
+    if mode == "glob": return fnmatch.fnmatch(name, needle)
+    try:
+        flags = 0 if cs else re.IGNORECASE
+        return re.search(needle, name, flags) is not None
+    except re.error:
+        return False
 
 def create_github_issue(title, body, labels=[]):
     import requests
@@ -293,10 +308,130 @@ async def rennygadetarget(
         content=f"{user.mention}, you’ve been dusted!",
         file=File(fp=buffer, filename="disintegrate.gif")
     )
+
+
+@app_commands.command(name="attach_search", description="Search attachment file names in a channel and export matches.")
+@app_commands.describe(
+    channel="Channel to scan",
+    query="Filename pattern (text, regex, or glob). Optional if ext filter is set.",
+    match="How to match the query",
+    case_sensitive="Case sensitive match",
+    ext="Comma-separated extensions, e.g. png,jpg,zip",
+    min_kb="Min size in KB",
+    max_kb="Max size in KB",
+    author="Only messages from this user",
+    days="Only look back this many days",
+    limit="Max messages to scan (up to 5000)",
+    log_channel="Where to post results (optional)"
+)
+@app_commands.checks.has_permissions(view_channel=True, read_message_history=True)
+async def attach_search(
+    interaction: Interaction,
+    channel: discord.TextChannel,
+    query: str | None = None,
+    match: Literal["contains","exact","regex","glob"] = "contains",
+    case_sensitive: bool = False,
+    ext: str | None = None,
+    min_kb: app_commands.Range[int, 0, 10_000_000] | None = None,
+    max_kb: app_commands.Range[int, 0, 10_000_000] | None = None,
+    author: discord.Member | None = None,
+    days: app_commands.Range[int, 1, 3650] | None = None,
+    limit: app_commands.Range[int, 1, 5000] = 2000,
+    log_channel: discord.TextChannel | None = None,
+):
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+
+    if not query and not ext:
+        await interaction.followup.send("Provide a query or an ext filter.", ephemeral=True)
+        return
+
+    exts = None
+    if ext:
+        exts = {"." + e.strip(". ").lower() for e in ext.split(",") if e.strip()}
+
+    cutoff_after = None
+    if days:
+        cutoff_after = datetime.now(timezone.utc) - timedelta(days=int(days))
+
+    rows = []
+    scanned = 0
+    progress = await interaction.followup.send("Scanning… 0%", ephemeral=True)
+
+    async for msg in channel.history(limit=int(limit), oldest_first=False, after=cutoff_after):
+        scanned += 1
+        if author and msg.author.id != author.id:
+            if scanned % 250 == 0:
+                await progress.edit(content=f"Scanning… {scanned}/{limit}")
+            continue
+        if not msg.attachments:
+            if scanned % 250 == 0:
+                await progress.edit(content=f"Scanning… {scanned}/{limit}")
+            continue
+
+        for a in msg.attachments:
+            name = a.filename or ""
+            if exts and not any(name.lower().endswith(x) for x in exts):
+                continue
+            if min_kb is not None and (a.size or 0) < (min_kb * 1024):
+                continue
+            if max_kb is not None and (a.size or 0) > (max_kb * 1024):
+                continue
+            if query and not _attach_match(name, query, match, case_sensitive):
+                continue
+            jump = f"https://discord.com/channels/{msg.guild.id}/{msg.channel.id}/{msg.id}"
+            rows.append({
+                "message_id": str(msg.id),
+                "author_id": str(msg.author.id),
+                "author": str(msg.author),
+                "created": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                "filename": name,
+                "size_bytes": a.size,
+                "content_type": a.content_type or "",
+                "url": a.url,
+                "jump_url": jump,
+            })
+
+        if scanned % 250 == 0:
+            await progress.edit(content=f"Scanning… {scanned}/{limit}")
+            await asyncio.sleep(0)
+
+    await progress.edit(content=f"Done. Matches: {len(rows)}")
+
+    if not rows:
+        await interaction.followup.send("No matches.", ephemeral=True)
+        return
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    data = io.BytesIO(buf.getvalue().encode("utf-8"))
+    out = discord.File(data, filename=f"attach_search_{channel.id}.csv")
+
+    summary = (f"Attachment search in {channel.mention}\n"
+               f"Query: {query or '(none)'} | Mode: {match}"
+               + (f" | Ext: {','.join(sorted(exts))}" if exts else "")
+               + (f" | Size: {min_kb or 0}–{max_kb or '∞'} KB" if (min_kb is not None or max_kb is not None) else "")
+               + (f" | Author: {author.mention}" if author else "")
+               + (f" | Days: {days}" if days else "")
+               + f"\nMatches: {len(rows)}")
+
+    if log_channel:
+        try:
+            await log_channel.send(summary, file=out, allowed_mentions=discord.AllowedMentions.none())
+            await interaction.followup.send("Posted results to the log channel.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("No permission to post in the log channel.", ephemeral=True)
+    else:
+        await interaction.followup.send(summary, file=out, ephemeral=True)
+
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
     tree.add_command(fortune_cmd)
     tree.add_command(cowsay_cmd)
     tree.add_command(trace_act)
     tree.add_command(rennygadetarget)
+    tree.add_command(attach_search)
 
