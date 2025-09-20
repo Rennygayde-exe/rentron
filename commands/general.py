@@ -1,5 +1,5 @@
 from discord.ext import commands
-from utils.responses import load_responses, RESPONSES
+from utils.responses import load_responses, RESPONSES, compile_triggers
 from discord.ui import View, Select, Modal, TextInput
 import discord
 from io import BytesIO
@@ -118,6 +118,7 @@ async def gitissue(interaction: Interaction):
 @commands.command(name="reloadresponses")
 async def reload_responses(ctx):
     load_responses()
+    compile_triggers()
     await ctx.send("Response triggers reloaded.")
 
 @commands.is_owner()

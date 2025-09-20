@@ -28,6 +28,8 @@ from commands.application import ApplicationReviewView
 from types import SimpleNamespace
 import discord.opus
 import pkgutil, importlib
+import utils.responses as r
+
 
 try:
     import nacl
@@ -104,8 +106,7 @@ async def on_ready():
     await bot.tree.sync()
 
     # Load responses
-    load_responses()
-
+    r.load_responses()
     # Application Button Refresh
     bot.add_view(ApplicationView())
     bot.add_view(TicketCloseView())
@@ -148,14 +149,19 @@ async def on_ready():
 
 
 @bot.event
-async def on_message(message):
-    await bot.process_commands(message)
-    if message.author.bot:
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.guild or not message.content:
         return
-    response = match_response(message, bot)
-    if response:
-        await message.channel.send(response)
 
+    txt = message.content
+    for entry in r.RESPONSES:
+        if r.match_response(txt, entry):
+            resp = entry.get("response", "")
+            if resp:
+                await message.channel.send(resp, allowed_mentions=discord.AllowedMentions.none())
+            break
+
+    await bot.process_commands(message)
 if __name__ == "__main__":
     import threading
 
