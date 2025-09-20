@@ -1,27 +1,45 @@
-import json
-import re
+from __future__ import annotations
+import json, re
+from pathlib import Path
+from typing import Iterable
 
-RESPONSES = []
+RESPONSES_FILE = Path("responses.json")
+RESPONSES: list[dict] = []
 
-def load_responses():
+def load_responses(path: str | Path = RESPONSES_FILE) -> list[dict]:
     global RESPONSES
     try:
-        with open("responses.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            RESPONSES = data.get("responses", [])
-            print(f"[responses] Loaded {len(RESPONSES)} entries.")
-    except Exception as e:
-        print(f"[responses] Failed to load: {e}")
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        raw = []
+    RESPONSES = raw if isinstance(raw, list) else raw.get("responses", [])
+    compile_triggers()
+    return RESPONSES
 
-def match_response(message, bot):
-    content = message.content.lower()
-    for entry in RESPONSES:
-        if entry.get("mention_required", False) and bot.user not in message.mentions:
-            continue
-        for pattern in entry.get("triggers", []):
-            if re.search(pattern, content):
-                response = entry.get("response", "")
-                if "{mention}" in response:
-                    response = response.format(mention=message.author.mention)
-                return response
-    return None
+def compile_triggers() -> None:
+    for e in RESPONSES:
+        mode = (e.get("mode") or "word").lower()
+        triggers: Iterable[str] = e.get("triggers") or []
+        pats = []
+        for t in triggers:
+            s = (t or "").strip()
+            if not s:
+                continue
+            if mode == "regex" or s.startswith("re:"):
+                pat = s[3:] if s.startswith("re:") else s
+                try:
+                    pats.append(re.compile(pat, re.I))
+                except re.error:
+                    continue
+            elif mode == "contains":
+                pats.append(re.compile(re.escape(s), re.I))
+            else:
+                token = re.escape(s).replace(r"\ ", r"\s+")
+                pats.append(re.compile(rf"(?<!\w){token}(?!\w)", re.I))
+        e["_patterns"] = pats
+
+def match_response(text: str, entry: dict) -> bool:
+    for rx in entry.get("_patterns", []):
+        if rx.search(text):
+            return True
+    return False

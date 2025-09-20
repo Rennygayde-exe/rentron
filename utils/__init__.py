@@ -1,5 +1,6 @@
-from .responses import load_responses, match_response, RESPONSES
+from .responses import load_responses, match_response, RESPONSES, compile_triggers
 
+__all__ = ["load_responses", "match_response", "RESPONSES", "compile_triggers"]
 class DummyRole:
     def __init__(self, name):
         self.name = name
