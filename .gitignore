@@ -27,3 +27,17 @@ commands/__pycache__/say.cpython-313.pyc
 data/mod_notes.json
 data/mod_notes.json
 commands/__pycache__/keyword_alerts.cpython-313.pyc
+ticket_views.json
+user_keys.json
+tickets.db
+snapshots/Oct12.json.gpg
+snapshots/Oct12.json
+requirements.txt
+requirements.txt
+gpg_users.json
+data/target_keywords_regex.json
+commands/__pycache__/vsp.cpython-313.pyc
+commands/__pycache__/tickets.cpython-313.pyc
+commands/__pycache__/regexsearch.cpython-313.pyc
+commands/__pycache__/encode.cpython-313.pyc
+commands/__pycache__/audit.cpython-313.pyc

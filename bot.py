@@ -83,6 +83,10 @@ async def load_extensions():
     await bot.load_extension("commands.pruning_logic")
     await bot.load_extension("commands.say")
     await bot.load_extension("commands.keyword_alerts")
+    await bot.load_extension("commands.vsp")
+    await bot.load_extension("commands.encode")
+    await bot.load_extension("commands.tickets")
+    await bot.load_extension("commands.audit")
     
     
 
