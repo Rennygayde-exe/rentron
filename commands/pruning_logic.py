@@ -1,245 +1,185 @@
-import io, csv, json, asyncio
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Literal
-
 import discord
-from discord import app_commands, Interaction
 from discord.ext import commands, tasks
+from discord import app_commands
+import asyncio
+import json
+import os
+import csv
+import random
+from datetime import datetime, timedelta, timezone
 
-UNIT_SECONDS = {
-    "minutes": 60,
-    "hours":   3600,
-    "days":    86400,
-    "weeks":   604800,
-}
-IMG_EXTS = (".png",".jpg",".jpeg",".gif",".bmp",".webp",".heic",".heif",".avif")
 
-class Cleanup(commands.Cog):
+CONFIG_FILE = "prune_schedule.json"
+LAST_FILE = "last_prune.txt"
+
+DEBUG_MODE = os.getenv("PRUNE_DEBUG") == "1"
+LOOP_INTERVAL = 60 if DEBUG_MODE else 1800
+
+class Pruning(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.schedule_file = Path("prune_schedule.json")
-        self.last_file = Path("last_prune.txt")
-
-    def _get_last(self) -> datetime | None:
-        if self.last_file.exists():
-            try:
-                return datetime.fromtimestamp(int(self.last_file.read_text().strip()), tz=timezone.utc)
-            except:
-                return None
-        return None
-
-    def _set_last(self, dt: datetime):
-        self.last_file.write_text(str(int(dt.timestamp())))
-
-    def _load_cfg(self) -> dict:
-        if self.schedule_file.exists():
-            try:
-                return json.loads(self.schedule_file.read_text(encoding="utf-8"))
-            except:
-                pass
-        return {"interval": 72, "unit": "hours", "channel_id": None, "log_channel_id": None}
-
-    def _save_cfg(self, cfg: dict):
-        self.schedule_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
-
-    async def _prune_attachments(
-        self,
-        interaction: Interaction,
-        channel: discord.TextChannel,
-        amount: int,
-        unit: Literal["minutes", "hours", "days", "weeks"],
-        attach_type: Literal["all", "images"],
-        log_channel: discord.TextChannel | None,
-    ) -> list[dict]:
-        if not interaction.guild:
-            await interaction.response.send_message("Run this in a server.", ephemeral=True)
-            return []
-        if not interaction.user.guild_permissions.manage_messages and not any(r.name == "Staff" for r in getattr(interaction.user, "roles", [])):
-            await interaction.response.send_message("No permission.", ephemeral=True)
-            return []
-
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-
-
-        perms = getattr(interaction.user, "guild_permissions", None)
-        has_manage = bool(getattr(perms, "manage_messages", False))
-        if not has_manage and not any(r.name == "Staff" for r in getattr(interaction.user, "roles", [])):
-            await interaction.followup.send("No permission.", ephemeral=True)
-            return []
-
-        cutoff = datetime.now(timezone.utc) - timedelta(**{unit: amount})
-
-        deleted_rows: list[dict] = []
-        deleted_count = failed = checked = 0
-        progress = await interaction.followup.send("Scanning… 0 checked / 0 deleted", ephemeral=True)
-
-        async for msg in channel.history(limit=None, before=cutoff, oldest_first=False):
-            checked += 1
-            if not msg.attachments:
-                if checked % 50 == 0:
-                    await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
-                continue
-
-            if attach_type == "images":
-                if not any(
-                    (a.content_type or "").startswith("image/") or (a.filename or "").lower().endswith(IMG_EXTS)
-                    for a in msg.attachments
-                ):
-                    if checked % 50 == 0:
-                        await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
-                    continue
-
-            att_url = msg.attachments[0].url if msg.attachments else ""
-            try:
-                await msg.delete()
-                deleted_rows.append({
-                    "id":        str(msg.id),
-                    "author":    f"{msg.author} ({msg.author.id})",
-                    "created":   msg.created_at.isoformat(),
-                    "attachment": att_url,
-                    "channel":   (getattr(msg.channel, "name", None) or str(msg.channel.id)),
-                })
-                deleted_count += 1
-                await asyncio.sleep(0.7)
-            except Exception:
-                failed += 1
-
-            if checked % 50 == 0:
-                await progress.edit(content=f"Scanning… {checked} checked / {deleted_count} deleted")
-
-        await progress.edit(content=f"Done—deleted {deleted_count} item(s). Failed: {failed}")
-
-        if deleted_rows:
-            buf = io.StringIO()
-            w = csv.DictWriter(buf, fieldnames=["id", "author", "created", "attachment", "channel"])
-            w.writeheader()
-            w.writerows(deleted_rows)
-            buf.seek(0)
-            file = discord.File(io.BytesIO(buf.read().encode()), filename=f"pruned_{channel.id}.csv")
-            summary = f"Pruned {len(deleted_rows)} message(s) in {channel.mention} older than {amount} {unit}."
-            if log_channel:
-                try:
-                    await log_channel.send(summary, file=file)
-                except Exception:
-                    await interaction.followup.send("Failed to post results to the log channel.", ephemeral=True)
-            else:
-                await interaction.followup.send(summary, file=file, ephemeral=True)
-        else:
-            await interaction.followup.send("No messages matched.", ephemeral=True)
-
-        self._set_last(datetime.now(timezone.utc))
-        return deleted_rows
-
-
-    # Background auto-prune loop (every 30 min)
-    @tasks.loop(minutes=30)
-    async def auto_prune_loop(self):
-        await self.bot.wait_until_ready()
-        cfg = self._load_cfg()
-        chan_id = cfg.get("channel_id")
-        if not chan_id:
-            return
-        channel = self.bot.get_channel(chan_id)
-        if not isinstance(channel, discord.TextChannel):
-            return
-        log_channel = self.bot.get_channel(cfg.get("log_channel_id")) if cfg.get("log_channel_id") else None
-
-        amt = int(cfg.get("interval", 72))
-        unit = cfg.get("unit", "hours")
-        if unit not in UNIT_SECONDS:
-            return
-
-        now = datetime.now(timezone.utc)
-        last = self._get_last()
-        threshold = amt * UNIT_SECONDS[unit]
-        if last and (now - last).total_seconds() < threshold:
-            return
-
-        class _DummyResp:
-            def is_done(self): return True
-            async def defer(self, **_): pass
-        class _DummyMsg:
-            async def edit(self, **_): pass
-        class _DummyFollowup:
-            async def send(self, *_, **__): return _DummyMsg()
-        class _Dummy:
-            def __init__(self, g):
-                self.user = type("U", (), {"roles":[type("R", (), {"name":"Staff"})()]})()
-                self.guild = g
-                self.response = _DummyResp()
-                self.followup = _DummyFollowup()
-
-        try:
-            dummy = _Dummy(channel.guild)
-            await self._prune_attachments(dummy, channel, amt, unit, "all", log_channel)
-            self._set_last(now)
-        except Exception:
-            pass
-
-    @app_commands.command(name="prune_attachments", description="Delete old attachments in a channel.")
-    @app_commands.describe(
-        channel="Channel to scan",
-        amount="Age amount",
-        unit="Age unit",
-        attach_type="Attachment type",
-        log_channel="Channel to post results (optional)",
-    )
-    @app_commands.checks.has_permissions(manage_messages=True)
-    async def prune_attachments_cmd(
-        self,
-        interaction: Interaction,
-        channel: discord.TextChannel,
-        amount: app_commands.Range[int, 1, 3650],
-        unit: Literal["minutes", "hours", "days", "weeks"],
-        attach_type: Literal["all", "images"],
-        log_channel: discord.TextChannel | None = None,
-    ):
-        await self._prune_attachments(interaction, channel, amount, unit, attach_type, log_channel)
-
-    @app_commands.command(name="set_prune_config", description="Configure auto-prune.")
-    @app_commands.describe(
-        channel="Where to prune",
-        amount="Interval amount",
-        unit="Unit",
-        log_channel="Where to post results (optional)"
-    )
-    async def set_prune_config(
-        self,
-        interaction: Interaction,
-        channel: discord.TextChannel,
-        amount: app_commands.Range[int,1,3650],
-        unit: Literal["minutes","hours","days","weeks"],
-        log_channel: discord.TextChannel | None = None
-    ):
-        if not interaction.user.guild_permissions.manage_messages and not any(r.name == "Staff" for r in getattr(interaction.user, "roles", [])):
-            await interaction.response.send_message("No permission.", ephemeral=True); return
-        cfg = {"channel_id": channel.id, "interval": int(amount), "unit": unit, "log_channel_id": (log_channel.id if log_channel else None)}
-        self._save_cfg(cfg)
-        await interaction.response.send_message(
-            f"Auto-prune set: every {amount} {unit} in {channel.mention}" + (f", results -> {log_channel.mention}" if log_channel else ""),
-            ephemeral=True
-        )
-
-    @app_commands.command(name="next_prune", description="Show next scheduled prune.")
-    async def next_prune(self, interaction: Interaction):
-        cfg = self._load_cfg()
-        last = self._get_last()
-        now  = datetime.now(timezone.utc)
-        secs = cfg["interval"] * UNIT_SECONDS[cfg["unit"]]
-        nxt = (last + timedelta(seconds=secs)) if last else (now + timedelta(seconds=secs))
-        chan = interaction.guild.get_channel(cfg["channel_id"]) if cfg.get("channel_id") else None
-        await interaction.response.send_message(
-            f"Next prune: <t:{int(nxt.timestamp())}:F> • Target: {chan.mention if chan else '`unset`'}",
-            ephemeral=True
-        )
-
-    async def cog_load(self):
         self.auto_prune_loop.start()
 
-    async def cog_unload(self):
+    def cog_unload(self):
         self.auto_prune_loop.cancel()
 
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        return {}
+
+    def save_config(self, config):
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f)
+
+    def load_last(self):
+        if os.path.exists(LAST_FILE):
+            with open(LAST_FILE, "r") as f:
+                return float(f.read().strip() or 0)
+        return 0
+
+    def save_last(self, ts: float):
+        with open(LAST_FILE, "w") as f:
+            f.write(str(ts))
+
+    async def safe_delete(self, msg: discord.Message):
+        try:
+            await msg.delete()
+            await asyncio.sleep(0.12)
+            return True
+        except discord.NotFound:
+            return False
+        except discord.HTTPException as e:
+            retry_after = getattr(e, "retry_after", None)
+            if retry_after:
+                await asyncio.sleep(retry_after + 0.25)
+                try:
+                    await msg.delete()
+                    return True
+                except Exception:
+                    return False
+            return False
+
+    async def prune_channel(self, channel: discord.TextChannel, cutoff: datetime, log_channel: discord.TextChannel, extra_channel: discord.TextChannel = None):
+        deleted = []
+        bulk_candidates = []
+        single_candidates = []
+
+        async for msg in channel.history(limit=None, before=cutoff):
+            if msg.attachments:
+                for att in msg.attachments:
+                    deleted.append([msg.id, msg.author.id, msg.created_at.isoformat(), att.url, channel.id])
+                age = datetime.now(timezone.utc) - msg.created_at
+                if age.days < 14:
+                    bulk_candidates.append(msg)
+                else:
+                    single_candidates.append(msg)
+
+        # Bulk delete in chunks
+        for i in range(0, len(bulk_candidates), 100):
+            chunk = bulk_candidates[i:i+100]
+            try:
+                await channel.delete_messages(chunk)
+            except Exception:
+                for m in chunk:
+                    await self.safe_delete(m)
+            await asyncio.sleep(0.5)
+
+        # Single deletes
+        for m in single_candidates:
+            await self.safe_delete(m)
+
+        if deleted:
+            fn = f"prune_log_{int(datetime.utcnow().timestamp())}.csv"
+            with open(fn, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["id","author","created","url","channel"])
+                writer.writerows(deleted)
+            if log_channel:
+                await log_channel.send(file=discord.File(fn))
+            if extra_channel:
+                await extra_channel.send(content=f"Deleted {len(deleted)} messages with attachments in {channel.mention}", file=discord.File(fn))
+            os.remove(fn)
+        elif extra_channel:
+            await extra_channel.send(content=f"No messages with attachments found to prune in {channel.mention}")
+
+    @tasks.loop(seconds=LOOP_INTERVAL)
+    async def auto_prune_loop(self):
+        try:
+            print(f"auto_prune_loop tick (interval={LOOP_INTERVAL}s, debug={DEBUG_MODE})")
+            await asyncio.sleep(random.uniform(0,5))  # jitter
+            config = self.load_config()
+            if not config or "channel_id" not in config or "interval" not in config or "unit" not in config:
+                return
+            last_ts = self.load_last()
+            now_ts = datetime.utcnow().timestamp()
+            unit = config["unit"]
+            mult = {"minutes":60,"hours":3600,"days":86400}.get(unit,3600)
+            interval_sec = config["interval"] * mult
+            if now_ts - last_ts < interval_sec:
+                return
+            channel = self.bot.get_channel(config["channel_id"])
+            log_channel = self.bot.get_channel(config.get("log_channel_id"))
+            if not channel:
+                return
+            cutoff = datetime.utcnow() - timedelta(seconds=interval_sec)
+            await self.prune_channel(channel, cutoff, log_channel)
+            self.save_last(now_ts)
+        except Exception as e:
+            print(f"auto_prune_loop error: {e}")
+
+    @app_commands.command(name="prune_attachments", description="Manually prune attachments")
+    async def prune_attachments(self, interaction: discord.Interaction, days: int, channel: discord.TextChannel, images_only: bool = False):
+        await interaction.response.defer(ephemeral=True)
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        log_channel = self.bot.get_channel(self.load_config().get("log_channel_id"))
+        await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
+        await interaction.followup.send(f"Manual prune executed for {channel.mention}", ephemeral=True)
+
+    @app_commands.command(name="set_prune_config", description="Set auto prune schedule")
+    async def set_prune_config(self, interaction: discord.Interaction, interval: int, unit: str, channel: discord.TextChannel, log_channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        config = {"interval": interval, "unit": unit, "channel_id": channel.id, "log_channel_id": log_channel.id}
+        self.save_config(config)
+        self.save_last(0)
+        cutoff = datetime.utcnow() - timedelta(seconds=interval * {"minutes":60,"hours":3600,"days":86400}.get(unit,3600))
+        await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
+        self.save_last(datetime.utcnow().timestamp())
+        await interaction.followup.send(f"Auto prune every {interval} {unit} in {channel.mention}, logs in {log_channel.mention}", ephemeral=True)
+
+    @app_commands.command(name="forcerun", description="Force an immediate auto-prune run with current config")
+    async def forcerun(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        config = self.load_config()
+        if not config:
+            await interaction.followup.send("No valid prune config set", ephemeral=True)
+            return
+        channel = self.bot.get_channel(config["channel_id"])
+        log_channel = self.bot.get_channel(config.get("log_channel_id"))
+        if not channel:
+            await interaction.followup.send("Configured channel not found", ephemeral=True)
+            return
+        unit = config["unit"]
+        mult = {"minutes":60,"hours":3600,"days":86400}.get(unit,3600)
+        interval_sec = config["interval"] * mult
+        cutoff = datetime.utcnow() - timedelta(seconds=interval_sec)
+        await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
+        self.save_last(datetime.utcnow().timestamp())
+        await interaction.followup.send(f"Forced prune executed for {channel.mention}", ephemeral=True)
+
+    @app_commands.command(name="next_prune", description="Show next scheduled prune time")
+    async def next_prune(self, interaction: discord.Interaction):
+        config = self.load_config()
+        if not config:
+            await interaction.response.send_message("No prune config set", ephemeral=True)
+            return
+        last_ts = self.load_last()
+        unit = config["unit"]
+        mult = {"minutes":60,"hours":3600,"days":86400}.get(unit,3600)
+        interval_sec = config["interval"] * mult
+        next_time = datetime.utcfromtimestamp(last_ts + interval_sec)
+        await interaction.response.send_message(f"Next prune at {next_time} UTC", ephemeral=True)
+
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Cleanup(bot))
+    await bot.add_cog(Pruning(bot))
