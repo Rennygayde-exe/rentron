@@ -118,19 +118,32 @@ class KeywordAlerts(commands.Cog):
         await i.followup.send(txt[:1900] if len(txt)<=1900 else txt[:1900]+"…", ephemeral=True)
 
     def _match(self, r: dict, m: discord.Message) -> bool:
-        if r.get("scope_channel_id") and int(r["scope_channel_id"]) != m.channel.id: return False
-        if not r.get("include_bots") and m.author.bot: return False
-        text = m.content or ""
-        if not r.get("case"): text_cmp = text.lower(); needle = r["phrase"].lower()
-        else: text_cmp = text; needle = r["phrase"]
-        t = r.get("match","contains")
-        if t == "exact": return text_cmp == needle
-        if t == "contains": return needle in text_cmp
-        try:
-            flags = 0 if r.get("case") else re.IGNORECASE
-            return re.search(r["phrase"], text, flags) is not None
-        except re.error:
+        if r.get("scope_channel_id") and int(r["scope_channel_id"]) != m.channel.id:
             return False
+        if not r.get("include_bots") and m.author.bot:
+            return False
+
+        text = m.content or ""
+        phrase = r["phrase"]
+        case_sensitive = r.get("case", False)
+        match_type = r.get("match", "contains")
+
+        flags = 0 if case_sensitive else re.IGNORECASE
+
+        if match_type == "exact":
+            return text == phrase if case_sensitive else text.lower() == phrase.lower()
+
+        elif match_type == "contains":
+            pattern = rf"\b{re.escape(phrase)}\b"
+            return re.search(pattern, text, flags) is not None
+
+        elif match_type == "regex":
+            try:
+                return re.search(phrase, text, flags) is not None
+            except re.error:
+                return False
+
+        return False
 
     @commands.Cog.listener("on_message")
     async def _on_message(self, m: discord.Message):
