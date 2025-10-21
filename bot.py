@@ -87,6 +87,7 @@ async def load_extensions():
     await bot.load_extension("commands.encode")
     await bot.load_extension("commands.tickets")
     await bot.load_extension("commands.audit")
+    await bot.load_extension("commands.regexsearch")
     
     
 
