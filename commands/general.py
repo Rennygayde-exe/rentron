@@ -1,7 +1,7 @@
 from discord.ext import commands
 from utils.responses import load_responses, RESPONSES, compile_triggers
 from discord.ui import View, Select, Modal, TextInput
-import discord
+import discord, random, json
 from io import BytesIO
 from PIL import Image
 import random
@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 import subprocess
 import asyncio, re, fnmatch
 from typing import Literal
+from pathlib import Path
 load_dotenv()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -428,6 +429,56 @@ async def attach_search(
     else:
         await interaction.followup.send(summary, file=out, ephemeral=True)
 
+
+IMAGE_DIR = Path("stuart_content/images")
+QUOTE_FILE = Path("stuart_content/quotes.json")
+
+def load_stuart_quotes() -> list[str]:
+    """Safely load Stuart Little quotes from the JSON file."""
+    if not QUOTE_FILE.exists():
+        return []
+    try:
+        with QUOTE_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            quotes = data.get("quotes", [])
+            if isinstance(quotes, list):
+                return quotes
+    except Exception as e:
+        print(f"[stuartlittle] Error loading quotes: {e}")
+    return []
+
+
+@app_commands.command(
+    name="stuartlittle",
+    description="Reflect on the actions and legacy of Stuart Little."
+)
+async def stuartlittle(interaction: discord.Interaction):
+    """Send a random Stuart Little slander quote or image."""
+    await interaction.response.defer()
+
+    # 50/50: send an image or text
+    if random.choice([True, False]):
+        if not IMAGE_DIR.exists():
+            await interaction.followup.send("No images directory found.")
+            return
+
+        images = [p for p in IMAGE_DIR.glob("*") if p.is_file()]
+        if not images:
+            await interaction.followup.send("No images available.")
+            return
+
+        chosen = random.choice(images)
+        await interaction.followup.send(file=discord.File(chosen))
+
+    else:
+        quotes = load_stuart_quotes()
+        if not quotes:
+            await interaction.followup.send("No Stuart Little reports found.")
+            return
+
+        chosen = random.choice(quotes)
+        await interaction.followup.send(chosen)
+
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
     tree.add_command(fortune_cmd)
@@ -435,4 +486,5 @@ def setup(tree: app_commands.CommandTree):
     tree.add_command(trace_act)
     tree.add_command(rennygadetarget)
     tree.add_command(attach_search)
+    tree.add_command(stuartlittle)
 
