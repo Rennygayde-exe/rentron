@@ -168,13 +168,32 @@ async def fortune_cmd(interaction: Interaction):
         output = f"Error running fortune: {e}"
 
     await interaction.followup.send(f"```\n{output}\n```")
+import subprocess, shutil
+from discord import app_commands, Interaction
 
 @app_commands.command(name="moo", description="Have the cow say your text")
 @app_commands.describe(text="Text to have the cow say")
 async def cowsay_cmd(interaction: Interaction, text: str):
     await interaction.response.defer()
-    proc = subprocess.run(["cowsay", text], capture_output=True, text=True)
-    await interaction.followup.send(f"```{proc.stdout}```")
+
+    cowsay_path = shutil.which("cowsay") or "/usr/games/cowsay"
+
+    try:
+        proc = subprocess.run(
+            [cowsay_path, text],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        output = proc.stdout.strip()
+        if not output:
+            output = "No output from cowsay."
+    except FileNotFoundError:
+        output = "`cowsay` not found on this system."
+    except subprocess.CalledProcessError as e:
+        output = f"Error running cowsay:\n{e.stderr or e.stdout}"
+
+    await interaction.followup.send(f"```{output}```")
 
 @app_commands.command(
     name="trace_act",
