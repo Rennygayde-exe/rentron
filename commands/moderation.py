@@ -55,7 +55,6 @@ class Moderation(commands.Cog):
 
         entries = []
 
-        # unwrapper
         if isinstance(payload, dict) and "bans" in payload:
             payload = payload["bans"]
 
@@ -445,5 +444,48 @@ class Moderation(commands.Cog):
         rows = g["notes"] if member is None else [n for n in g["notes"] if n["user_id"] == str(member.id)]
         b = io.BytesIO(json.dumps(rows, ensure_ascii=False, indent=2).encode("utf-8"))
         await interaction.followup.send(file=File(b, filename=f"notes_{interaction.guild_id}.json"))
+
+
+class Privacy(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="privacy", description="View RenTron's official Privacy Policy.")
+    async def privacy(self, interaction: discord.Interaction):
+        policy_path = Path("privacy.md")
+
+        if not policy_path.exists():
+            await interaction.response.send_message(
+                "Privacy Policy file (`privacy.md`) not found on the server.",
+                ephemeral=True
+            )
+            return
+
+        policy_text = policy_path.read_text(encoding="utf-8")
+        sections = policy_text.split("---")
+
+        embed = discord.Embed(
+            title="Privacy Policy of RenTron",
+            description="Summary of RenTron's privacy and data handling practices.",
+            color=discord.Color.blue()
+        )
+
+        for section in sections:
+            lines = [line.strip() for line in section.strip().splitlines() if line.strip()]
+            if not lines:
+                continue
+            header = lines[0].lstrip("#").strip()
+            body = "\n".join(lines[1:])
+            if len(body) > 1024:
+                for i in range(0, len(body), 1024):
+                    chunk = body[i:i+1024]
+                    embed.add_field(name=header if i == 0 else f"{header} (cont.)", value=chunk, inline=False)
+            else:
+                embed.add_field(name=header, value=body, inline=False)
+
+        embed.set_footer(text="© 2025 RenTron • Privacy matters.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(Moderation(bot))
+    await bot.add_cog(Privacy(bot))
