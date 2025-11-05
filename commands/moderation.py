@@ -450,32 +450,39 @@ class Privacy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="privacy", description="View RenTron's official Privacy Policy.")
-    async def privacy(self, interaction: discord.Interaction):
-        policy_path = Path("privacy.md")
+    def _build_embed_from_markdown(
+        self,
+        file_path: Path,
+        *,
+        title: str,
+        description: str,
+        footer: str | None = None,
+    ) -> discord.Embed | None:
+        if not file_path.exists():
+            return None
 
-        if not policy_path.exists():
-            await interaction.response.send_message(
-                "Privacy Policy file (`privacy.md`) not found on the server.",
-                ephemeral=True
-            )
-            return
-
-        policy_text = policy_path.read_text(encoding="utf-8")
-        sections = policy_text.split("---")
+        text = file_path.read_text(encoding="utf-8")
+        sections = text.split("---")
 
         embed = discord.Embed(
-            title="Privacy Policy of RenTron",
-            description="Summary of RenTron's privacy and data handling practices.",
+            title=title,
+            description=description,
             color=discord.Color.blue()
         )
 
         for section in sections:
-            lines = [line.strip() for line in section.strip().splitlines() if line.strip()]
-            if not lines:
+            raw_lines = [line.strip() for line in section.strip().splitlines() if line.strip()]
+            cleaned_lines = []
+            for line in raw_lines:
+                cleaned = re.sub(r"<[^>]+>", "", line).strip()
+                if cleaned:
+                    cleaned_lines.append(cleaned)
+            if not cleaned_lines:
                 continue
-            header = lines[0].lstrip("#").strip()
-            body = "\n".join(lines[1:])
+            header = cleaned_lines[0].lstrip("#").strip() or "Section"
+            body = "\n".join(cleaned_lines[1:]).strip()
+            if not body:
+                body = "*No additional details provided.*"
             if len(body) > 1024:
                 for i in range(0, len(body), 1024):
                     chunk = body[i:i+1024]
@@ -483,7 +490,47 @@ class Privacy(commands.Cog):
             else:
                 embed.add_field(name=header, value=body, inline=False)
 
-        embed.set_footer(text="© 2025 RenTron • Privacy matters.")
+        if footer:
+            embed.set_footer(text=footer)
+
+        return embed
+
+    @app_commands.command(name="privacy", description="View RenTron's official Privacy Policy.")
+    async def privacy(self, interaction: discord.Interaction):
+        policy_path = Path("privacy.md")
+
+        embed = self._build_embed_from_markdown(
+            policy_path,
+            title="Privacy Policy of RenTron",
+            description="Summary of RenTron's privacy and data handling practices.",
+            footer="© 2025 RenTron • Tools at the crossroads of security, creativity, and community."
+        )
+
+        if embed is None:
+            await interaction.response.send_message(
+                "Privacy Policy file (`privacy.md`) not found on the server.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="readme", description="View RenTron's README overview.")
+    async def readme(self, interaction: discord.Interaction):
+        readme_path = Path("README.md")
+
+        embed = self._build_embed_from_markdown(
+            readme_path,
+            title="RenTron README",
+            description="Highlights from the project's README.",
+            footer="© 2025 RenTron • Tools at the crossroads of security, creativity, and community."
+        )
+
+        if embed is None:
+            await interaction.response.send_message(
+                "README file (`README.md`) not found on the server.",
+                ephemeral=True
+            )
+            return
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
