@@ -41,6 +41,11 @@
       "id": "robin",
       "triggers": ["rome.*fact", "fact.*rome", "rome", "romans", "Caligula"],
       "response": "I don't know much on that, so I have outsourced this question to my good friend  <@491415164663365633> knows a lot, ask them!"
+    },
+    {
+      "id": "creator_mom",
+      "triggers": ["<@216080530414895114>", "<@!216080530414895114>"],
+      "response": "Oh wow. thats my creators WAAAIF, that means thats my mom.....wait....WHY ARE YOU TAGGING MY MOM WEIRDO"
     }
 
   ]

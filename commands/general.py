@@ -207,54 +207,121 @@ async def cowsay_cmd(interaction: Interaction, text: str):
 async def trace_act(interaction: Interaction, days: int, log_channel: TextChannel):
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
+    if not guild:
+        await interaction.followup.send("This command can only be used inside a server.", ephemeral=True)
+        return
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    members = guild.members
-    total = len(members)
-    checked = 0
-    inactive = []
+    bot_member = guild.get_member(interaction.client.user.id) if interaction.client.user else None
+    if bot_member is None:
+        bot_member = getattr(guild, "me", None)
+    if bot_member is None:
+        try:
+            bot_member = await guild.fetch_member(interaction.client.user.id)
+        except discord.HTTPException:
+            pass
+    if bot_member is None:
+        await interaction.followup.send("Unable to resolve bot permissions for this guild.", ephemeral=True)
+        return
 
-    bar = "[░░░░░░░░░░] 0%"
-    progress_msg = await interaction.followup.send(f"Scanning members… {bar}", ephemeral=True)
+    if not guild.chunked and guild.member_count and len(guild.members) < guild.member_count:
+        try:
+            await guild.chunk()
+        except discord.HTTPException:
+            pass
 
-    for member in members:
-        last_seen = None
-        for channel in guild.text_channels:
-            if not channel.permissions_for(guild.me).read_message_history:
-                continue
-            try:
-                async for msg in channel.history(limit=100, after=cutoff):
-                    if msg.author.id == member.id:
-                        last_seen = msg.created_at
-                        break
-                if last_seen:
-                    break
-            except discord.Forbidden:
-                continue
+    members = list(guild.members)
+    total_members = len(members)
+    if total_members == 0:
+        await interaction.followup.send("No members found to audit.", ephemeral=True)
+        return
 
-        if last_seen is None:
-            inactive.append(member)
+    def build_bar(progress: int, total: int) -> str:
+        if total <= 0:
+            return "[██████████] 100%"
+        percent = int(progress / total * 100)
+        percent = max(0, min(100, percent))
+        filled = percent // 10
+        return "[" + "█" * filled + "░" * (10 - filled) + f"] {percent}%"
 
-        checked += 1
-        if checked % max(1, total // 20) == 0 or checked == total:
-            percent = int(checked / total * 100)
-            filled = percent // 10
-            bar = "[" + "█"*filled + "░"*(10-filled) + f"] {percent}%"
-            await progress_msg.edit(content=f"Scanning members… {bar}")
+    accessible_channels = [
+        channel
+        for channel in guild.text_channels
+        if channel.permissions_for(bot_member).read_message_history
+    ]
+    total_channels = len(accessible_channels)
+    if total_channels == 0:
+        await interaction.followup.send("No readable text channels were found for the bot.", ephemeral=True)
+        return
 
-        await asyncio.sleep(0.05)
+    progress_msg = await interaction.followup.send(
+        f"Scanning channels… {build_bar(0, total_channels)}",
+        ephemeral=True
+    )
 
+    activity_map: dict[int, datetime] = {}
+    skipped_channels: list[str] = []
+    scanned_channels = 0
+
+    for channel in accessible_channels:
+        try:
+            async for msg in channel.history(limit=None, after=cutoff, oldest_first=False):
+                if not msg.author:
+                    continue
+                last_seen = activity_map.get(msg.author.id)
+                if last_seen is None or msg.created_at > last_seen:
+                    activity_map[msg.author.id] = msg.created_at
+        except discord.Forbidden:
+            skipped_channels.append(f"#{channel.name}")
+        except discord.HTTPException:
+            skipped_channels.append(f"#{channel.name}")
+
+        scanned_channels += 1
+        if scanned_channels % max(1, total_channels // 20) == 0 or scanned_channels == total_channels:
+            await progress_msg.edit(content=f"Scanning channels… {build_bar(scanned_channels, total_channels)}")
+
+        await asyncio.sleep(0.2)
+
+    await progress_msg.edit(content="Building report…")
+
+    inactive_members = []
     csv_buffer = io.StringIO()
     writer = csv.writer(csv_buffer)
-    writer.writerow(["Member", "ID", "Status"])
-    for m in members:
-        status = "Inactive" if m in inactive else "Active"
-        writer.writerow([str(m), m.id, status])
-    csv_buffer.seek(0)
+    writer.writerow(["Member", "ID", "Status", "Last Seen (UTC)"])
 
+    for member in members:
+        last_seen = activity_map.get(member.id)
+        if last_seen is None:
+            inactive_members.append(member)
+            writer.writerow([str(member), member.id, "Inactive", "N/A"])
+        else:
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            writer.writerow([
+                str(member),
+                member.id,
+                "Active",
+                last_seen.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            ])
+
+    csv_buffer.seek(0)
     file = File(fp=io.BytesIO(csv_buffer.read().encode()), filename="inactive_members.csv")
-    await log_channel.send(f"Inactive (> {days}d): {len(inactive)}/{total}", file=file)
-    await progress_msg.edit(content="Audit complete!")
+
+    summary_lines = [
+        f"Inactive (> {days}d): {len(inactive_members)}/{total_members}",
+        f"Channels scanned: {scanned_channels}/{total_channels}",
+    ]
+    if skipped_channels:
+        summary_lines.append(f"Skipped {len(skipped_channels)} channels (no access).")
+
+    try:
+        await log_channel.send("\n".join(summary_lines), file=file)
+        await progress_msg.edit(content="Audit complete! Report posted.")
+    except discord.Forbidden:
+        await progress_msg.edit(
+            content="Audit complete, but I could not post in the selected log channel."
+        )
 
 
 @app_commands.command(
@@ -506,4 +573,3 @@ def setup(tree: app_commands.CommandTree):
     tree.add_command(rennygadetarget)
     tree.add_command(attach_search)
     tree.add_command(stuartlittle)
-
