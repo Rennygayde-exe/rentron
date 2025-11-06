@@ -284,6 +284,68 @@ class Moderation(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="help", description="List all commands and what they do.")
+    async def show_help(self, interaction: Interaction):
+        tree = interaction.client.tree
+        entries: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        for cmd in tree.walk_commands():
+            if isinstance(cmd, app_commands.Group):
+                continue
+
+            key = getattr(cmd, "qualified_name", cmd.name)
+            key = f"{key}:{getattr(cmd, 'type', 'unknown')}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            cmd_type = getattr(cmd, "type", discord.AppCommandType.chat_input)
+            if cmd_type is discord.AppCommandType.chat_input:
+                label = f"/{getattr(cmd, 'qualified_name', cmd.name)}"
+            elif cmd_type is discord.AppCommandType.user:
+                label = f"User menu • {cmd.name}"
+            elif cmd_type is discord.AppCommandType.message:
+                label = f"Message menu • {cmd.name}"
+            else:
+                label = cmd.name
+
+            description = (getattr(cmd, "description", "") or "No description provided.").strip()
+            entries.append((label, description))
+
+        if not entries:
+            await interaction.response.send_message("No commands are currently registered.", ephemeral=True)
+            return
+
+        entries.sort(key=lambda x: x[0].lower())
+        lines = [f"{label} — {desc}" for label, desc in entries]
+
+        chunks: list[str] = []
+        current = ""
+        limit = 3500
+        for line in lines:
+            addition = f"{line}\n"
+            if len(current) + len(addition) > limit and current:
+                chunks.append(current.rstrip())
+                current = addition
+            else:
+                current += addition
+        if current:
+            chunks.append(current.rstrip())
+
+        embed = discord.Embed(
+            title="RenTron Command Manual",
+            description=chunks[0],
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text=f"{len(entries)} commands available")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        for chunk in chunks[1:]:
+            followup_embed = discord.Embed(description=chunk, color=discord.Color.blurple())
+            await interaction.followup.send(embed=followup_embed, ephemeral=True)
+
     @app_commands.command(name="restart_bot", description="Restarts Rentron.")
     async def restart_bot(self, interaction: Interaction):
         if not any(role.name in ("Admin", "S6 Professional", "Staff") for role in interaction.user.roles):
@@ -520,8 +582,8 @@ class Privacy(commands.Cog):
 
         embed = self._build_embed_from_markdown(
             readme_path,
-            title="RenTron README",
-            description="Highlights from the project's README.",
+            title="RenTron README.md",
+            description="README.",
             footer="© 2025 RenTron • Tools at the crossroads of security, creativity, and community."
         )
 
