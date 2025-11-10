@@ -112,6 +112,7 @@ async def on_ready():
 
     # Load responses
     r.load_responses()
+    general.load_out_of_office()
     # Application Button Refresh
     bot.add_view(ApplicationView())
     bot.add_view(TicketCloseView())
@@ -159,6 +160,25 @@ async def on_message(message: discord.Message):
         return
 
     txt = message.content
+    if message.mentions:
+        mention_responses = []
+        seen_ids = set()
+        for member in message.mentions:
+            if member.bot or member.id == message.author.id:
+                continue
+            if member.id in seen_ids:
+                continue
+            seen_ids.add(member.id)
+            status = general.get_out_of_office_status(member.id)
+            if status:
+                note = status.get("message") or "is currently out of office."
+                mention_responses.append(f"{member.display_name} is out of office: {note}")
+        if mention_responses:
+            await message.channel.send(
+                "\n".join(mention_responses),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
     for entry in r.RESPONSES:
         if r.match_response(txt, entry):
             resp = entry.get("response", "")
@@ -174,4 +194,3 @@ if __name__ == "__main__":
         bot.run(token)
     else:
         print("Bot token not found in .env file.")
-

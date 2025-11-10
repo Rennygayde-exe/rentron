@@ -28,6 +28,57 @@ GITHUB_REPO = os.getenv("GITHUB_REPO")
 _FRAMES = 30
 _FRAME_DURATION = 60  # ms per frame
 
+OUT_OF_OFFICE_FILE = Path("data/out_of_office.json")
+OUT_OF_OFFICE: dict[str, dict[str, str]] = {}
+
+
+def load_out_of_office() -> dict[str, dict[str, str]]:
+    """Load the cached out-of-office map from disk."""
+    global OUT_OF_OFFICE
+    if not OUT_OF_OFFICE_FILE.exists():
+        OUT_OF_OFFICE = {}
+        return OUT_OF_OFFICE
+    try:
+        with OUT_OF_OFFICE_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                OUT_OF_OFFICE = {str(k): v for k, v in data.items()}
+            else:
+                OUT_OF_OFFICE = {}
+    except (json.JSONDecodeError, OSError):
+        OUT_OF_OFFICE = {}
+    return OUT_OF_OFFICE
+
+
+def save_out_of_office() -> None:
+    """Persist the current out-of-office cache to disk."""
+    OUT_OF_OFFICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with OUT_OF_OFFICE_FILE.open("w", encoding="utf-8") as f:
+        json.dump(OUT_OF_OFFICE, f, indent=2)
+
+
+def set_out_of_office(user_id: int, message: str) -> None:
+    OUT_OF_OFFICE[str(user_id)] = {
+        "message": message,
+        "set_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_out_of_office()
+
+
+def clear_out_of_office(user_id: int) -> bool:
+    removed = OUT_OF_OFFICE.pop(str(user_id), None)
+    if removed is not None:
+        save_out_of_office()
+        return True
+    return False
+
+
+def get_out_of_office_status(user_id: int) -> dict[str, str] | None:
+    return OUT_OF_OFFICE.get(str(user_id))
+
+
+load_out_of_office()
+
 
 def _attach_match(name: str, needle: str, mode: str, cs: bool) -> bool:
     if not cs:
@@ -114,6 +165,45 @@ async def gitissue(interaction: Interaction):
     await interaction.response.send_message(
         "Select labels for your GitHub issue:", view=LabelSelectView(), ephemeral=True
     )
+
+
+@app_commands.command(
+    name="outofoffice",
+    description="Set or clear your out of office status."
+)
+@app_commands.describe(
+    status="Set to true to enable and false to clear your out of office message.",
+    message="Message to display when others tag you. Required when enabling."
+)
+async def out_of_office(interaction: Interaction, status: bool, message: str = ""):
+    user_id = interaction.user.id
+
+    if status:
+        trimmed = message.strip()
+        if not trimmed:
+            await interaction.response.send_message(
+                "You need to include a message when enabling out of office.",
+                ephemeral=True,
+            )
+            return
+        set_out_of_office(user_id, trimmed)
+        await interaction.response.send_message(
+            "You're marked out of office. I'll let folks know when they ping you.",
+            ephemeral=True,
+        )
+        return
+
+    was_set = clear_out_of_office(user_id)
+    if was_set:
+        await interaction.response.send_message(
+            "Your out of office status is cleared.",
+            ephemeral=True,
+        )
+    else:
+        await interaction.response.send_message(
+            "You were not marked out of office.",
+            ephemeral=True,
+        )
 
 @commands.is_owner()
 @commands.command(name="reloadresponses")
@@ -567,6 +657,7 @@ async def stuartlittle(interaction: discord.Interaction):
 
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
+    tree.add_command(out_of_office)
     tree.add_command(fortune_cmd)
     tree.add_command(cowsay_cmd)
     tree.add_command(trace_act)

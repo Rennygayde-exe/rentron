@@ -4,6 +4,7 @@ import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
+from datetime import timedelta
 
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -12,6 +13,34 @@ STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 TICKET_LOG_CHANNEL_ID = int(os.getenv("TICKET_LOG_CHANNEL_ID", "0"))
 TICKET_CATEGORY_ID = int(os.getenv("TICKET_CATEGORY_ID", "0"))
 HOME_GUILD_ID = int(os.getenv("HOME_GUILD_ID", "0"))
+APPLICATION_FOLLOWUP_CATEGORY_ID = int(os.getenv("APPLICATION_FOLLOWUP_CATEGORY_ID", "1327042700733845505"))
+FOLLOWUP_MESSAGE_TEXT = (
+    "Hello, just following up here, more information is needed to complete your application! "
+    "If you need assistance, please use @Staff"
+)
+FOLLOWUP_DELAY = timedelta(days=2)
+
+
+def build_application_nickname(name: str, pronouns: str) -> str | None:
+    name_clean = (name or "").strip()
+    pronouns_clean = (pronouns or "").strip()
+    if not name_clean:
+        return None
+
+    if pronouns_clean:
+        candidate = f"{name_clean} ({pronouns_clean})"
+        if len(candidate) <= 32:
+            return candidate
+
+        available = 32 - len(name_clean) - 3  # accounts for space and parentheses
+        if available > 1:
+            truncated_pronouns = pronouns_clean[:available].rstrip()
+            if truncated_pronouns:
+                candidate = f"{name_clean} ({truncated_pronouns})"
+                if len(candidate) <= 32:
+                    return candidate
+
+    return name_clean[:32]
 
 
 # SQL Shit
@@ -246,9 +275,12 @@ class ApplicationReviewView(discord.ui.View):
                     name = (self.data.get("name") or "").strip()
                     pronouns = (self.data.get("pronouns") or "").strip()
                     delete_pending(user_id=member.id, message_id=interaction.message.id)
-                    if name and pronouns:
-                        try: await member.edit(nick=f"{name} ({pronouns})")
-                        except discord.Forbidden: pass
+                    nickname = build_application_nickname(name, pronouns)
+                    if nickname:
+                        try:
+                            await member.edit(nick=nickname)
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
                     dm_text = f"Your application has been approved.\nReason: {ms.reason.value}"
                 else:
                     dm_text = f"Your application has been denied.\nReason: {ms.reason.value}"
@@ -318,7 +350,8 @@ class TicketCloseView(discord.ui.View):
 # Cog Setup
 class Applications(commands.Cog):
     def __init__(self, bot: commands.Bot):
-        self.bot = bot; init_db()
+        self.bot = bot
+        init_db()
 
     async def cog_load(self):
         self.bot.add_view(ApplicationView())
@@ -375,6 +408,81 @@ class Applications(commands.Cog):
             await interaction.response.send_message("Invalid message ID.", ephemeral=True); return
         delete_pending(message_id=mid)
         await interaction.response.send_message("Removed.", ephemeral=True)
+
+    async def send_followup_reminders(self):
+        if not APPLICATION_FOLLOWUP_CATEGORY_ID:
+            return 0, 0
+        category = self.bot.get_channel(APPLICATION_FOLLOWUP_CATEGORY_ID)
+        if category is None:
+            try:
+                fetched = await self.bot.fetch_channel(APPLICATION_FOLLOWUP_CATEGORY_ID)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return 0, 0
+            category = fetched
+        if not isinstance(category, discord.CategoryChannel):
+            return 0, 0
+
+        now = discord.utils.utcnow()
+        guild = category.guild
+        me = None
+        if guild:
+            if self.bot.user:
+                me = guild.get_member(self.bot.user.id)
+            if me is None:
+                me = guild.me
+
+        processed = 0
+        reminders_sent = 0
+
+        for channel in category.channels:
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            processed += 1
+            if me:
+                perms = channel.permissions_for(me)
+                if not perms.send_messages:
+                    continue
+            last_message = None
+            if channel.last_message_id:
+                try:
+                    last_message = await channel.fetch_message(channel.last_message_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    last_message = None
+            if last_message is None:
+                try:
+                    async for msg in channel.history(limit=1):
+                        last_message = msg
+                        break
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+            if last_message is None:
+                continue
+            if (
+                self.bot.user
+                and last_message.author.id == self.bot.user.id
+                and last_message.content.strip() == FOLLOWUP_MESSAGE_TEXT
+            ):
+                continue
+            if now - last_message.created_at >= FOLLOWUP_DELAY:
+                try:
+                    await channel.send(FOLLOWUP_MESSAGE_TEXT)
+                    reminders_sent += 1
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+                await asyncio.sleep(1.0)
+        return processed, reminders_sent
+
+    @app_commands.command(name="ticketremind", description="Send follow-up reminders to inactive application tickets")
+    async def ticketremind(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        processed, reminders = await self.send_followup_reminders()
+        if processed == 0:
+            await interaction.followup.send("No application channels were checked. Verify the category ID.", ephemeral=True)
+            return
+        if reminders == 0:
+            await interaction.followup.send(f"Checked {processed} channels; nothing needed a reminder.", ephemeral=True)
+            return
+        await interaction.followup.send(f"Checked {processed} channels and sent {reminders} reminder(s).", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Applications(bot))
