@@ -7,23 +7,31 @@ from dataclasses import dataclass
 from discord.ext import commands
 from discord import app_commands
 import asyncio, random
+from yt_dlp.utils import DownloadError, ExtractorError
 
-YDL_OPTS = {
-    "format": (
-        "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
-        "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
-        "bestaudio[protocol^=http][acodec!=none]/"
-        "bestaudio"
-    ),
+YDL_COMMON_OPTS = {
     "quiet": True,
     "noplaylist": True,
     "default_search": "ytsearch",
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["tv", "web"]
-        }
-    },
 }
+
+YDL_OPTS = (
+    {
+        **YDL_COMMON_OPTS,
+        "format": (
+            "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
+            "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
+            "bestaudio[protocol^=http][acodec!=none]/"
+            "bestaudio"
+        ),
+        "extractor_args": {"youtube": {"player_client": ["android", "tv", "web"]}},
+    },
+    {
+        **YDL_COMMON_OPTS,
+        "format": "bestaudio/best",
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+    },
+)
 
 FF_COMMON = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -protocol_whitelist file,https,tcp,tls,crypto"
 
@@ -31,7 +39,6 @@ FF_COMMON = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -protocol
 def _ff_headers(h: dict) -> str:
     h = {"Referer": "https://www.youtube.com", "User-Agent": h.get("User-Agent", "Mozilla/5.0"), **(h or {})}
     blob = "".join(f"{k}: {v}\r\n" for k, v in h.items())
-    import shlex
     return f"-headers {shlex.quote(blob)}"
 
 def _ff_args_for(song_url: str, headers: dict, start: int):
@@ -72,30 +79,45 @@ class Music(commands.Cog):
         return self.states.setdefault(guild_id, GuildMusicState())
 
     async def _extract(self, query: str) -> Song:
+        def _song_from_info(info: dict) -> Song:
+            if "entries" in info:
+                info = info["entries"][0]
+
+            url = info.get("url")
+            if not url:
+                fmts = info.get("formats") or []
+                pick = next((f for f in fmts if f.get("ext") == "m4a" and f.get("acodec") != "none" and (f.get("protocol") or "").startswith("http")), None)
+                if not pick:
+                    pick = next((f for f in fmts if "m3u8" in (f.get("protocol") or "") and f.get("acodec") != "none"), None)
+                if pick:
+                    url = pick["url"]
+
+            return Song(
+                id=info.get("id"),
+                title=info.get("title") or "Unknown",
+                url=url or info.get("webpage_url") or query,
+                page_url=info.get("webpage_url") or query,
+                duration=int(info.get("duration") or 0),
+                requester_id=0,
+                headers=info.get("http_headers") or {},
+            )
+
         def _do():
-            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-                info = ydl.extract_info(query, download=False)
-                if "entries" in info:
-                    info = info["entries"][0]
+            last_err: Exception | None = None
+            for override in YDL_OPTS:
+                opts = {**override}
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                    return _song_from_info(info)
+                except (DownloadError, ExtractorError) as err:
+                    last_err = err
+                    continue
 
-                url = info.get("url")
-                if not url:
-                    fmts = info.get("formats") or []
-                    pick = next((f for f in fmts if f.get("ext") == "m4a" and f.get("acodec") != "none" and (f.get("protocol") or "").startswith("http")), None)
-                    if not pick:
-                        pick = next((f for f in fmts if "m3u8" in (f.get("protocol") or "") and f.get("acodec") != "none"), None)
-                    if pick:
-                        url = pick["url"]
-
-                return Song(
-                    id=info.get("id"),
-                    title=info.get("title") or "Unknown",
-                    url=url or info.get("webpage_url") or query,
-                    page_url=info.get("webpage_url") or query,
-                    duration=int(info.get("duration") or 0),
-                    requester_id=0,
-                    headers=info.get("http_headers") or {},
-                )
+            msg = "Unable to find a playable audio format for that query."
+            if last_err:
+                raise RuntimeError(msg) from last_err
+            raise RuntimeError(msg)
         return await asyncio.to_thread(_do)
 
     async def _ensure_voice(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None):
@@ -165,7 +187,11 @@ class Music(commands.Cog):
     async def play(self, interaction: discord.Interaction, query: str):
         await interaction.response.defer(ephemeral=False)
         vc = await self._ensure_voice(interaction, None)
-        song = await self._extract(query)
+        try:
+            song = await self._extract(query)
+        except Exception as exc:
+            await interaction.followup.send(f"Failed to queue track: {exc}")
+            return
         song.requester_id = interaction.user.id
         state = self._state(interaction.guild_id)
         state.queue.append(song)

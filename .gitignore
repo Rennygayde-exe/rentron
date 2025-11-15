@@ -41,3 +41,6 @@ commands/__pycache__/tickets.cpython-313.pyc
 commands/__pycache__/regexsearch.cpython-313.pyc
 commands/__pycache__/encode.cpython-313.pyc
 commands/__pycache__/audit.cpython-313.pyc
+data/High Risk TMH.xlsx
+/riskroster
+utils/__pycache__/risk_roster.cpython-313.pyc
