@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from discord.ext import commands
 from discord import app_commands
-import asyncio, random
+import asyncio, random, os
 from yt_dlp.utils import DownloadError, ExtractorError
 
 YDL_COMMON_OPTS = {
@@ -15,23 +15,60 @@ YDL_COMMON_OPTS = {
     "default_search": "ytsearch",
 }
 
-YDL_OPTS = (
-    {
-        **YDL_COMMON_OPTS,
-        "format": (
-            "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
-            "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
-            "bestaudio[protocol^=http][acodec!=none]/"
-            "bestaudio"
-        ),
-        "extractor_args": {"youtube": {"player_client": ["android", "tv", "web"]}},
-    },
-    {
-        **YDL_COMMON_OPTS,
-        "format": "bestaudio/best",
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
-    },
-)
+def _normalize_po_token(raw: str | None, client: str) -> str | None:
+    if not raw:
+        return None
+    raw = raw.strip()
+    prefix = f"{client}.gvs+"
+    if not raw.startswith(prefix):
+        raw = prefix + raw
+    return raw
+
+PO_TOKEN_ANDROID = _normalize_po_token(os.getenv("YT_PO_TOKEN_ANDROID"), "android")
+PO_TOKEN_IOS = _normalize_po_token(os.getenv("YT_PO_TOKEN_IOS"), "ios")
+
+def _build_ydl_options():
+    opts: list[dict] = [
+        {
+            **YDL_COMMON_OPTS,
+            "format": (
+                "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
+                "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
+                "bestaudio[protocol^=http][acodec!=none]/"
+                "bestaudio"
+            ),
+            "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+        },
+        {
+            **YDL_COMMON_OPTS,
+            "format": "bestaudio/best",
+            "extractor_args": {"youtube": {"player_client": ["web"]}},
+        },
+    ]
+
+    if PO_TOKEN_ANDROID:
+        opts.append(
+            {
+                **YDL_COMMON_OPTS,
+                "format": "bestaudio/best",
+                "extractor_args": {
+                    "youtube": {"player_client": ["android"], "po_token": PO_TOKEN_ANDROID}
+                },
+            }
+        )
+
+    if PO_TOKEN_IOS:
+        opts.append(
+            {
+                **YDL_COMMON_OPTS,
+                "format": "bestaudio/best",
+                "extractor_args": {"youtube": {"player_client": ["ios"], "po_token": PO_TOKEN_IOS}},
+            }
+        )
+
+    return tuple(opts)
+
+YDL_OPTS = _build_ydl_options()
 
 FF_COMMON = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -protocol_whitelist file,https,tcp,tls,crypto"
 
