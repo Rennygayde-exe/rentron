@@ -1,4 +1,4 @@
-import os, io, csv, json, sqlite3, asyncio
+import os, io, csv, json, sqlite3, asyncio, traceback
 from pathlib import Path
 import discord
 from discord import app_commands, Interaction
@@ -20,6 +20,31 @@ FOLLOWUP_MESSAGE_TEXT = (
 )
 FOLLOWUP_DELAY = timedelta(days=2)
 
+APPLICATION_ERROR_LOG = BASE_DIR / "application_errors.log"
+
+
+def log_application_error(context: str, error: Exception):
+    try:
+        APPLICATION_ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        with APPLICATION_ERROR_LOG.open("a", encoding="utf-8") as fp:
+            fp.write(f"[{discord.utils.utcnow().isoformat()}] {context}: {error}\n")
+            fp.write("".join(traceback.format_exception(type(error), error, error.__traceback__)))
+            fp.write("\n")
+    except Exception:
+        pass
+
+
+async def send_application_error(interaction: discord.Interaction, message: str):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message(message, ephemeral=True)
+        else:
+            await interaction.followup.send(message, ephemeral=True)
+    except Exception:
+        pass
 
 def build_application_nickname(name: str, pronouns: str) -> str | None:
     name_clean = (name or "").strip()
@@ -186,7 +211,15 @@ class ApplicationFormView(discord.ui.View):
             embed.set_footer(text=f"{i.user} ({i.user.id})")
 
             if staff_ch:
-                review_msg = await staff_ch.send(embed=embed, view=ApplicationReviewView(i.user.id, data))
+                review_view = ApplicationReviewView(i.user.id, data)
+                review_msg = await staff_ch.send(embed=embed, view=review_view)
+                review_view.review_msg_id = review_msg.id
+                client = i.client
+                if client:
+                    try:
+                        client.add_view(review_view, message_id=review_msg.id)
+                    except Exception:
+                        pass
                 store_pending_application(review_msg.id, i.user.id, data)
 
             mark_as_submitted(i.user.id, discord.utils.utcnow().isoformat())
@@ -238,70 +271,122 @@ class ApplicationReviewView(discord.ui.View):
         self.applicant_id = int(applicant_id)
         self.data = data or application_data or {}
         self.review_msg_id = review_msg_id
+
+    def _load_application_data(self, message_id: int | None = None) -> dict:
+        if isinstance(self.data, dict) and self.data:
+            return self.data
+        row = None
+        mid = message_id or self.review_msg_id
+        with sqlite3.connect(DB_PATH) as con:
+            if mid:
+                row = con.execute(
+                    "SELECT data FROM pending_applications WHERE message_id=?",
+                    (int(mid),),
+                ).fetchone()
+            if not row:
+                row = con.execute(
+                    "SELECT data FROM pending_applications WHERE user_id=? ORDER BY message_id DESC LIMIT 1",
+                    (self.applicant_id,),
+                ).fetchone()
+        if row:
+            try:
+                self.data = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError):
+                self.data = {}
+        return self.data or {}
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="application_approve")
     async def approve(self, i: discord.Interaction, _: discord.ui.Button):
-        await self._decide(i, True)
+        try:
+            await self._decide(i, True)
+        except Exception as exc:
+            log_application_error("application_approve_button", exc)
+            await send_application_error(i, "Failed to open approval modal. See application_errors.log for details.")
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger, custom_id="application_deny")
     async def deny(self, i: discord.Interaction, _: discord.ui.Button):
-        await self._decide(i, False)
+        try:
+            await self._decide(i, False)
+        except Exception as exc:
+            log_application_error("application_deny_button", exc)
+            await send_application_error(i, "Failed to open denial modal. See application_errors.log for details.")
 
     @discord.ui.button(label="Open Ticket", style=discord.ButtonStyle.primary, custom_id="application_ticket")
     async def ticket(self, i: discord.Interaction, _: discord.ui.Button):
         await self._ticket(i)
 
     async def _decide(self, interaction: discord.Interaction, approved: bool):
+        original_message_id = interaction.message.id if interaction.message else self.review_msg_id
+        original_guild = interaction.guild
+
         class Reason(discord.ui.Modal, title=("Approval Reason" if approved else "Denial Reason")):
             reason = discord.ui.TextInput(label="Reason", style=discord.TextStyle.paragraph)
             async def on_submit(ms, mi: discord.Interaction):
-                guild = mi.guild; member = guild.get_member(self.applicant_id)
-                if not member:
-                    await mi.response.send_message("User not found.", ephemeral=True); return
-                if approved:
-                    branch = self.data.get("branch_choice")
-                    if branch:
-                        role = discord.utils.get(guild.roles, name=branch)
-                        if role:
-                            try: await member.add_roles(role)
-                            except discord.Forbidden: pass
-                    verified = discord.utils.get(guild.roles, name="Verified")
-                    pending = discord.utils.get(guild.roles, name="Pending Application")
-                    if verified:
-                        try: await member.add_roles(verified)
-                        except discord.Forbidden: pass
-                    if pending:
-                        try: await member.remove_roles(pending)
-                        except discord.Forbidden: pass
-                    name = (self.data.get("name") or "").strip()
-                    pronouns = (self.data.get("pronouns") or "").strip()
-                    delete_pending(user_id=member.id, message_id=interaction.message.id)
-                    nickname = build_application_nickname(name, pronouns)
-                    if nickname:
+                try:
+                    guild = mi.guild or original_guild
+                    if guild is None:
+                        await send_application_error(mi, "Guild not found for this application."); return
+                    data = self._load_application_data(original_message_id)
+                    member = guild.get_member(self.applicant_id)
+                    if member is None:
                         try:
-                            await member.edit(nick=nickname)
-                        except (discord.Forbidden, discord.HTTPException):
-                            pass
-                    dm_text = f"Your application has been approved.\nReason: {ms.reason.value}"
-                else:
-                    dm_text = f"Your application has been denied.\nReason: {ms.reason.value}"
-                try: await member.send(dm_text)
-                except Exception: pass
+                            member = await guild.fetch_member(self.applicant_id)
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            member = None
+                    if not member:
+                        await send_application_error(mi, "User not found."); return
+                    if approved:
+                        branch = data.get("branch_choice")
+                        if branch:
+                            role = discord.utils.get(guild.roles, name=branch)
+                            if role:
+                                try: await member.add_roles(role)
+                                except discord.Forbidden: pass
+                        verified = discord.utils.get(guild.roles, name="Verified")
+                        pending = discord.utils.get(guild.roles, name="Pending Application")
+                        if verified:
+                            try: await member.add_roles(verified)
+                            except discord.Forbidden: pass
+                        if pending:
+                            try: await member.remove_roles(pending)
+                            except discord.Forbidden: pass
+                        name = (data.get("name") or data.get("preferred_name") or "").strip()
+                        pronouns = (data.get("pronouns") or "").strip()
+                        delete_pending(user_id=member.id, message_id=original_message_id)
+                        nickname = build_application_nickname(name, pronouns)
+                        if nickname:
+                            try:
+                                await member.edit(nick=nickname)
+                            except (discord.Forbidden, discord.HTTPException):
+                                pass
+                        dm_text = f"Your application has been approved.\nReason: {ms.reason.value}"
+                    else:
+                        dm_text = f"Your application has been denied.\nReason: {ms.reason.value}"
+                    try: await member.send(dm_text)
+                    except Exception: pass
 
-                for c in self.children: c.disabled = True
-                await mi.message.edit(view=self)
-                await mi.response.send_message(
-                    f"Application {'approved' if approved else 'denied'} for {member.mention}.", ephemeral=True)
+                    for c in self.children: c.disabled = True
+                    try:
+                        await mi.message.edit(view=self)
+                    except discord.HTTPException as exc:
+                        if getattr(exc, "code", None) != 50005:
+                            raise
+                        
+                    await mi.response.send_message(
+                        f"Application {'approved' if approved else 'denied'} for {member.mention}.", ephemeral=True)
 
-                buf = io.StringIO(); w = csv.writer(buf)
-                w.writerow(["Field","Value"])
-                for k,v in self.data.items(): w.writerow([k.replace('_',' ').title(), v])
-                w.writerow(["Decision","Approved" if approved else "Denied"])
-                w.writerow(["Reason", ms.reason.value]); w.writerow(["Reviewed By", str(mi.user)])
-                w.writerow(["Applicant", str(member)]); buf.seek(0)
-                file = discord.File(io.BytesIO(buf.read().encode()), filename=f"{member.id}_app_log.csv")
-                log = guild.get_channel(TICKET_LOG_CHANNEL_ID)
-                if log: await log.send(f"Application log for {member.mention}", file=file)
-                delete_pending(message_id=interaction.message.id)
+                    buf = io.StringIO(); w = csv.writer(buf)
+                    w.writerow(["Field","Value"])
+                    for k,v in data.items(): w.writerow([k.replace('_',' ').title(), v])
+                    w.writerow(["Decision","Approved" if approved else "Denied"])
+                    w.writerow(["Reason", ms.reason.value]); w.writerow(["Reviewed By", str(mi.user)])
+                    w.writerow(["Applicant", str(member)]); buf.seek(0)
+                    file = discord.File(io.BytesIO(buf.read().encode()), filename=f"{member.id}_app_log.csv")
+                    log = guild.get_channel(TICKET_LOG_CHANNEL_ID)
+                    if log: await log.send(f"Application log for {member.mention}", file=file)
+                    delete_pending(message_id=original_message_id)
+                except Exception as exc:
+                    log_application_error("application_decision_modal", exc)
+                    await send_application_error(mi, "An error occurred handling this decision. See application_errors.log for details.")
         await interaction.response.send_modal(Reason())
 
     async def _ticket(self, interaction: discord.Interaction):
@@ -374,6 +459,7 @@ class Applications(commands.Cog):
         ch = interaction.client.get_channel(STAFF_REVIEW_CHANNEL_ID)
         if not ch:
             await interaction.response.send_message("Channel not found.", ephemeral=True); return
+        await interaction.response.defer(ephemeral=True)
         with sqlite3.connect(DB_PATH) as con:
             row = con.execute("SELECT user_id,data FROM pending_applications WHERE message_id=?", (mid,)).fetchone()
         if not row:
@@ -384,13 +470,32 @@ class Applications(commands.Cog):
                 uid = int((emb.footer.text or "").split("(")[-1].rstrip(")"))
                 store_pending_application(mid, uid, data); row = (uid, json.dumps(data))
             except Exception as e:
-                await interaction.response.send_message(f"Could not backfill: {e}", ephemeral=True); return
+                await interaction.followup.send(f"Could not backfill: {e}", ephemeral=True); return
         uid, data_json = row
-        await interaction.response.send_message("View refreshed.", ephemeral=True)
+        data = json.loads(data_json)
         try:
             msg = await ch.fetch_message(mid)
-            await msg.edit(view=ApplicationReviewView(uid, json.loads(data_json)))
-        except Exception: pass
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+            await interaction.followup.send(f"Failed to fetch message: {exc}", ephemeral=True); return
+        refreshed_view = ApplicationReviewView(uid, data, review_msg_id=mid)
+        status_msg = "View refreshed."
+        try:
+            await msg.edit(view=refreshed_view)
+        except discord.HTTPException as exc:
+            if getattr(exc, "code", None) == 50005:
+                embed = msg.embeds[0] if msg.embeds else discord.Embed(title="New Application")
+                new_msg = await ch.send(embed=embed, view=refreshed_view)
+                refreshed_view.review_msg_id = new_msg.id
+                store_pending_application(new_msg.id, uid, data)
+                delete_pending(message_id=mid)
+                status_msg = (
+                    "Original message could not be edited (not authored by the bot). "
+                    "A new review message was posted instead."
+                )
+            else:
+                await interaction.followup.send(f"Failed to refresh view: {exc}", ephemeral=True)
+                return
+        await interaction.followup.send(status_msg, ephemeral=True)
 
     @app_commands.command(name="list_pending", description="List pending application message IDs")
     async def list_pending(self, interaction: Interaction):

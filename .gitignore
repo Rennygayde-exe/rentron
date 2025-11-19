@@ -44,3 +44,6 @@ commands/__pycache__/audit.cpython-313.pyc
 data/High Risk TMH.xlsx
 /riskroster
 utils/__pycache__/risk_roster.cpython-313.pyc
+commands/__pycache__/role_menu.cpython-313.pyc
+commands/__pycache__/xp.cpython-313.pyc
+xp.db
