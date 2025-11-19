@@ -66,3 +66,6 @@ stuart_content/images/alternate-ending-for-stuart-little-where-snowball-kills-v0
 data/High Risk TMH.xlsx
 /riskroster
 utils/__pycache__/risk_roster.cpython-313.pyc
+commands/__pycache__/role_menu.cpython-313.pyc
+commands/__pycache__/xp.cpython-313.pyc
+xp.db

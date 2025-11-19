@@ -1,0 +1,34 @@
+{
+  "1440567935776198656": {
+    "guild_id": 663035397416419351,
+    "channel_id": 1326497954324025364,
+    "entries": [
+      {
+        "emoji": "\ud83d\ude07",
+        "role_id": 663035870559076365,
+        "label": "Role"
+      }
+    ]
+  },
+  "1440576844478025749": {
+    "guild_id": 663035397416419351,
+    "channel_id": 683858241964474455,
+    "entries": [
+      {
+        "emoji": null,
+        "role_id": 663036442204831784,
+        "label": "Allies"
+      },
+      {
+        "emoji": null,
+        "role_id": 663035870559076365,
+        "label": "Air Force"
+      },
+      {
+        "emoji": null,
+        "role_id": 1335700209875025960,
+        "label": "Air Force Help"
+      }
+    ]
+  }
+}

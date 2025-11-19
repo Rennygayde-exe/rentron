@@ -24,7 +24,7 @@ from pathlib import Path
 import datetime
 from datetime import datetime, timedelta, timezone
 from utils import DummyInteraction
-from commands.application import ApplicationReviewView
+from commands.application import ApplicationReviewView, store_pending_application, delete_pending
 from types import SimpleNamespace
 import discord.opus
 import pkgutil, importlib
@@ -88,8 +88,45 @@ async def load_extensions():
     await bot.load_extension("commands.tickets")
     await bot.load_extension("commands.audit")
     await bot.load_extension("commands.regexsearch")
+    await bot.load_extension("commands.xp")
+    await bot.load_extension("commands.role_menu")
     
     
+
+def _build_application_embed_from_data(app_data: dict, applicant_id: int) -> discord.Embed:
+    embed = discord.Embed(title="New Application", color=discord.Color.blue())
+    embed.add_field(name="Preferred Name", value=app_data.get("name", "Unknown"), inline=False)
+    embed.add_field(name="Pronouns", value=app_data.get("pronouns", "Unknown"), inline=False)
+    embed.add_field(name="Branch", value=app_data.get("branch_choice", "Unknown"), inline=False)
+    embed.add_field(name="Status", value=app_data.get("status_choice", "Unknown"), inline=False)
+    embed.add_field(name="Referral Source", value=app_data.get("refer", "Unknown"), inline=False)
+    embed.set_footer(text=f"Applicant ID {applicant_id}")
+    return embed
+
+
+async def _attach_review_view_to_message(
+    target_channel: discord.abc.Messageable,
+    message: discord.Message,
+    applicant_id: int,
+    app_data: dict,
+):
+    view = ApplicationReviewView(applicant_id=applicant_id, application_data=app_data, review_msg_id=message.id)
+    try:
+        await message.edit(view=view)
+        bot.add_view(view, message_id=message.id)
+        return
+    except discord.HTTPException as exc:
+        if getattr(exc, "code", None) != 50005:
+            raise
+
+    embed = message.embeds[0] if message.embeds else _build_application_embed_from_data(app_data, applicant_id)
+    new_msg = await target_channel.send(embed=embed, view=view)
+    view.review_msg_id = new_msg.id
+    bot.add_view(view, message_id=new_msg.id)
+    store_pending_application(new_msg.id, applicant_id, app_data)
+    delete_pending(message_id=message.id)
+    print(f"Reposted review message {message.id} as {new_msg.id} (original not authored by bot).")
+
 
 async def main():
     async with bot:
@@ -141,15 +178,37 @@ async def on_ready():
         for message_id, user_id, raw in rows:
             try:
                 msg = await staff_channel.fetch_message(message_id)
+            except Exception as e:
+                print(f"Failed to fetch review message {message_id}: {e}")
+                continue
+            try:
                 app_data = json.loads(raw)
-                view = ApplicationReviewView(applicant_id=user_id, application_data=app_data)
-
-                bot.add_view(view, message_id=msg.id)
-
-                await msg.edit(view=view)
-
+            except json.JSONDecodeError:
+                print(f"Invalid application data for {message_id}; skipping.")
+                continue
+            try:
+                await _attach_review_view_to_message(staff_channel, msg, user_id, app_data)
             except Exception as e:
                 print(f"Failed to reattach review view for {message_id}: {e}")
+
+    # Audit persistent application views and register any missing ones
+    conn = sqlite3.connect("applications.db")
+    c = conn.cursor()
+    c.execute("SELECT message_id, user_id, data FROM pending_applications")
+    pending_rows = c.fetchall()
+    conn.close()
+    if staff_channel:
+        for message_id, user_id, raw in pending_rows:
+            if any(view for view in bot.persistent_views if isinstance(view, ApplicationReviewView) and getattr(view, "review_msg_id", None) == message_id):
+                continue
+            app_data = None
+            try:
+                app_data = json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+            review_view = ApplicationReviewView(applicant_id=user_id, application_data=app_data or {})
+            review_view.review_msg_id = message_id
+            bot.add_view(review_view, message_id=message_id)
 
     print("Bot is ready and applications work!.")
 
