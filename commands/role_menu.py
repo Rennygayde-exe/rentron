@@ -13,6 +13,7 @@ from discord.ext import commands
 
 
 ROLE_MENU_FILE = Path("data/role_menus.json")
+ROLE_REACT_FILE = Path("data/react_roles.json")
 logger = logging.getLogger(__name__)
 
 
@@ -223,7 +224,9 @@ class RoleMenu(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.menus: Dict[str, Dict] = {}
+        self.react_roles: Dict[str, Dict] = {}
         self._load_menus()
+        self._load_react_roles()
         self._register_persistent_views()
 
     def _load_menus(self) -> None:
@@ -242,6 +245,23 @@ class RoleMenu(commands.Cog):
         ROLE_MENU_FILE.parent.mkdir(parents=True, exist_ok=True)
         with ROLE_MENU_FILE.open("w", encoding="utf-8") as fp:
             json.dump(self.menus, fp, indent=2)
+
+    def _load_react_roles(self) -> None:
+        if not ROLE_REACT_FILE.exists():
+            self.react_roles = {}
+            return
+        try:
+            with ROLE_REACT_FILE.open("r", encoding="utf-8") as fp:
+                data = json.load(fp) or {}
+                self.react_roles = data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            logger.exception("Failed to load react roles file")
+            self.react_roles = {}
+
+    def _save_react_roles(self) -> None:
+        ROLE_REACT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with ROLE_REACT_FILE.open("w", encoding="utf-8") as fp:
+            json.dump(self.react_roles, fp, indent=2)
 
     def _register_persistent_views(self) -> None:
         dirty = False
@@ -372,6 +392,113 @@ class RoleMenu(commands.Cog):
         builder = RoleMenuBuilderView(self, interaction, title, description, target_channel)
         await interaction.response.send_message(builder.build_status(), view=builder, ephemeral=True)
 
+    def _parse_react_entries(self, interaction: Interaction, raw: str) -> List[Dict]:
+        entries: List[Dict] = []
+        errors: List[str] = []
+        if not raw:
+            raise ValueError("Provide at least one emoji/role pair.")
+        for line in re.split(r"[\n,]+", raw):
+            chunk = line.strip()
+            if not chunk:
+                continue
+            role_match = re.search(r"<@&(\d+)>", chunk)
+            emoji_token = None
+            if role_match:
+                emoji_token = chunk[: role_match.start()].strip() or None
+            if not emoji_token:
+                parts = chunk.split()
+                if len(parts) < 2:
+                    errors.append(chunk)
+                    continue
+                emoji_token = parts[0]
+            role_match = role_match or re.search(r"<@&(\d+)>", chunk)
+            role = None
+            role_id = None
+            if role_match:
+                role_id = int(role_match.group(1))
+                role = interaction.guild.get_role(role_id) if interaction.guild else None
+            else:
+                at_index = chunk.find("@")
+                if at_index != -1 and interaction.guild:
+                    raw_name = chunk[at_index + 1 :].strip()
+                    normalized = raw_name.lower()
+                    role = discord.utils.find(
+                        lambda r: r.name.lower() == normalized, interaction.guild.roles
+                    )
+                    if role is None:
+                        role = discord.utils.find(
+                            lambda r: r.name.lower().startswith(normalized),
+                            interaction.guild.roles,
+                        )
+                    if role:
+                        role_id = role.id
+            if role is None or role_id is None:
+                errors.append(chunk)
+                continue
+            try:
+                emoji_obj = discord.PartialEmoji.from_str(emoji_token)
+                emoji_str = str(emoji_obj)
+            except Exception:
+                emoji_str = emoji_token
+            entries.append({"emoji": emoji_str, "role_id": role_id, "role_name": role.name})
+        if errors:
+            raise ValueError(
+                "Could not parse the following entries:\n" + "\n".join(f"- {line}" for line in errors)
+            )
+        if not entries:
+            raise ValueError("No valid emoji/role pairs were provided.")
+        return entries
+
+    @app_commands.command(name="reactrole", description="Create a reaction-role message.")
+    @app_commands.checks.has_permissions(manage_roles=True)
+    @app_commands.describe(
+        channel="Channel to post the message",
+        content="Message content to display",
+        mappings="Comma or line separated entries. Example: 😀 @Role, <:fox:123>@AnotherRole",
+    )
+    async def reactrole(
+        self,
+        interaction: Interaction,
+        channel: TextChannel,
+        content: str,
+        mappings: str,
+    ) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this command inside a server.", ephemeral=True)
+            return
+        try:
+            entries = self._parse_react_entries(interaction, mappings)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        message = await channel.send(content)
+        stored_entries: List[Dict] = []
+        for entry in entries:
+            emoji_str = entry["emoji"]
+            role_id = entry["role_id"]
+            try:
+                emoji_obj = discord.PartialEmoji.from_str(emoji_str)
+                reaction_emoji = emoji_obj if emoji_obj.id else emoji_obj.name
+            except Exception:
+                reaction_emoji = emoji_str
+            try:
+                await message.add_reaction(reaction_emoji)
+            except discord.HTTPException:
+                await interaction.followup.send(f"Failed to add reaction {emoji_str}; aborting.", ephemeral=True)
+                await message.delete()
+                return
+            stored_entries.append({"emoji": emoji_str, "role_id": role_id})
+        self.react_roles[str(message.id)] = {
+            "guild_id": interaction.guild.id,
+            "channel_id": channel.id,
+            "entries": stored_entries,
+        }
+        self._save_react_roles()
+        await interaction.followup.send(
+            f"Reaction roles created in {channel.mention}. Users can react to receive roles.", ephemeral=True
+        )
+
 
     async def create_menu_message(
         self,
@@ -403,6 +530,56 @@ class RoleMenu(commands.Cog):
         if view is not None:
             await message.edit(view=view)
             self.bot.add_view(view, message_id=message.id)
+
+    def _get_react_entry(self, message_id: int, emoji: discord.PartialEmoji) -> Dict | None:
+        data = self.react_roles.get(str(message_id))
+        if not data:
+            return None
+        emoji_str = str(emoji)
+        for entry in data.get("entries", []):
+            if entry.get("emoji") == emoji_str:
+                return entry
+        return None
+
+    async def _handle_reaction(self, payload: discord.RawReactionActionEvent, add: bool) -> None:
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        entry = self._get_react_entry(payload.message_id, payload.emoji)
+        if not entry:
+            return
+        guild = self.bot.get_guild(payload.guild_id or 0)
+        if guild is None:
+            return
+        member = payload.member or guild.get_member(payload.user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(payload.user_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                return
+        if member.bot:
+            return
+        role = guild.get_role(entry["role_id"])
+        if role is None:
+            return
+        try:
+            if add:
+                if role not in member.roles:
+                    await member.add_roles(role, reason="Reaction role")
+            else:
+                if role in member.roles:
+                    await member.remove_roles(role, reason="Reaction role")
+        except discord.Forbidden:
+            logger.warning("Missing permissions to modify reaction role %s for %s", role.id, member.id)
+        except discord.HTTPException:
+            logger.exception("Failed to modify reaction role %s for %s", role.id, member.id)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        await self._handle_reaction(payload, True)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        await self._handle_reaction(payload, False)
 
 
 async def setup(bot: commands.Bot) -> None:

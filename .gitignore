@@ -69,3 +69,6 @@ utils/__pycache__/risk_roster.cpython-313.pyc
 commands/__pycache__/role_menu.cpython-313.pyc
 commands/__pycache__/xp.cpython-313.pyc
 xp.db
+application_errors.log
+motd.md
+data/react_roles.json

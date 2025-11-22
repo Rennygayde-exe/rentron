@@ -170,7 +170,11 @@ class TicketSystem(commands.Cog):
         msg_intro = f"{interaction.user.mention} claimed this ticket"
         if member:
             msg_intro += f" for {member.mention}"
-        await channel.send(msg_intro + ".", embed=embed, view=view)
+        message = await channel.send(msg_intro + ".", embed=embed, view=view)
+        try:
+            interaction.client.add_view(view, message_id=message.id)
+        except Exception:
+            pass
         await interaction.followup.send(f"Ticket #{ticket_id} claimed. {channel.mention}", ephemeral=True)
         c.execute("UPDATE tickets SET status='CLAIMED', claimer_id=?, channel_id=? WHERE id=?", (interaction.user.id, channel.id, ticket_id))
         conn.commit()
@@ -326,6 +330,60 @@ class TicketCloseView(View):
     def __init__(self, ticket_type: str, opener: discord.User | None):
         super().__init__(timeout=None)
         self.add_item(TicketCloseButton(ticket_type, opener))
+
+
+async def refresh_claimed_ticket_views(bot: commands.Bot):
+    """Re-register close buttons for active claimed ticket channels."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, channel_id, user_id, ticket_type FROM tickets WHERE channel_id IS NOT NULL AND status!='CLOSED'")
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        return
+    bot_id = bot.user.id if bot.user else None
+    for ticket_id, channel_id, user_id, ticket_type in rows:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                continue
+        if not isinstance(channel, discord.TextChannel):
+            continue
+        opener = None
+        if user_id and channel.guild:
+            opener = channel.guild.get_member(user_id)
+            if opener is None:
+                try:
+                    opener = await channel.guild.fetch_member(user_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    opener = None
+        target_message = None
+        try:
+            async for msg in channel.history(limit=50, oldest_first=True):
+                if bot_id and msg.author.id != bot_id:
+                    continue
+                if msg.components:
+                    target_message = msg
+                    break
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            target_message = None
+        view = TicketCloseView(ticket_type or "staff", opener)
+        if target_message is None:
+            try:
+                target_message = await channel.send(
+                    "Ticket controls restored. Use this button to close the ticket when finished.",
+                    view=view,
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+        else:
+            try:
+                await target_message.edit(view=view)
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+        bot.add_view(view, message_id=target_message.id)
 
 
 async def setup(bot: commands.Bot):

@@ -1,4 +1,4 @@
-import os, io, csv, json, sqlite3, asyncio, traceback
+import os, io, csv, json, sqlite3, asyncio, traceback, logging, re
 from pathlib import Path
 import discord
 from discord import app_commands, Interaction
@@ -13,6 +13,17 @@ STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 TICKET_LOG_CHANNEL_ID = int(os.getenv("TICKET_LOG_CHANNEL_ID", "0"))
 TICKET_CATEGORY_ID = int(os.getenv("TICKET_CATEGORY_ID", "0"))
 HOME_GUILD_ID = int(os.getenv("HOME_GUILD_ID", "0"))
+DEFAULT_VERIFIED_ROLE_ID = 663038933789311016
+VERIFIED_ROLE_NAME = os.getenv("VERIFIED_ROLE_NAME", "Verified")
+VERIFIED_ROLE_ID = int(os.getenv("VERIFIED_ROLE_ID") or DEFAULT_VERIFIED_ROLE_ID)
+PENDING_ROLE_NAME = os.getenv("PENDING_ROLE_NAME", "Pending Application")
+PENDING_ROLE_ID = int(os.getenv("PENDING_ROLE_ID", "0") or 0)
+WELCOME_CHANNEL_ID = int(
+    os.getenv("WELCOME_CHANNEL_ID")
+    or os.getenv("XP_NOTIFICATION_CHANNEL_ID", "0")
+    or 0
+)
+MOTD_FILE = Path(os.getenv("MOTD_FILE") or (BASE_DIR / "motd.md"))
 APPLICATION_FOLLOWUP_CATEGORY_ID = int(os.getenv("APPLICATION_FOLLOWUP_CATEGORY_ID", "1327042700733845505"))
 FOLLOWUP_MESSAGE_TEXT = (
     "Hello, just following up here, more information is needed to complete your application! "
@@ -21,6 +32,40 @@ FOLLOWUP_MESSAGE_TEXT = (
 FOLLOWUP_DELAY = timedelta(days=2)
 
 APPLICATION_ERROR_LOG = BASE_DIR / "application_errors.log"
+TICKET_GREETING_PHRASE = "a staff member will assist you shortly."
+CHANNEL_TAG_RE = re.compile(r"#([\w\-]+)")
+
+def load_motd_text() -> str:
+    try:
+        content = MOTD_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        logging.exception("Failed to read MOTD from %s", MOTD_FILE)
+        return ""
+    return content.strip()
+
+def fetch_pending_application_entry(applicant_id: int, message_id: int | None = None):
+    with sqlite3.connect(DB_PATH) as con:
+        row = None
+        if message_id:
+            row = con.execute(
+                "SELECT message_id,user_id,data FROM pending_applications WHERE message_id=?",
+                (int(message_id),),
+            ).fetchone()
+        if not row:
+            row = con.execute(
+                "SELECT message_id,user_id,data FROM pending_applications WHERE user_id=? ORDER BY message_id DESC LIMIT 1",
+                (int(applicant_id),),
+            ).fetchone()
+    if not row:
+        return None
+    mid, uid, raw = row
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = {}
+    return {"message_id": mid, "user_id": uid, "data": data}
 
 
 def log_application_error(context: str, error: Exception):
@@ -45,6 +90,41 @@ async def send_application_error(interaction: discord.Interaction, message: str)
             await interaction.followup.send(message, ephemeral=True)
     except Exception:
         pass
+
+def _render_channel_mentions(guild: discord.Guild | None, text: str) -> str:
+    if guild is None or not text:
+        return text
+
+    def repl(match: re.Match) -> str:
+        channel_name = match.group(1)
+        channel = discord.utils.get(guild.channels, name=channel_name)
+        if channel:
+            return channel.mention
+        return match.group(0)
+
+    return CHANNEL_TAG_RE.sub(repl, text)
+
+async def send_welcome_message(bot: commands.Bot, member: discord.Member):
+    if not WELCOME_CHANNEL_ID:
+        return
+    channel = bot.get_channel(WELCOME_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(WELCOME_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            channel = None
+    if channel is None:
+        logging.warning("Welcome channel %s not found for MOTD broadcast.", WELCOME_CHANNEL_ID)
+        return
+    motd = load_motd_text()
+    if not motd:
+        motd = "Please welcome {member}!"
+    raw_message = motd.replace("{member}", member.mention).replace("{name}", member.display_name)
+    message = _render_channel_mentions(member.guild, raw_message)
+    try:
+        await channel.send(message)
+    except (discord.Forbidden, discord.HTTPException):
+        logging.warning("Failed to send welcome message for %s in channel %s", member.id, WELCOME_CHANNEL_ID)
 
 def build_application_nickname(name: str, pronouns: str) -> str | None:
     name_clean = (name or "").strip()
@@ -91,10 +171,298 @@ def mark_as_submitted(user_id:int, submitted_at:str):
         con.execute("INSERT OR REPLACE INTO applications(user_id,submitted_at,status) VALUES(?,?,'pending')",
                     (int(user_id), submitted_at)); con.commit()
 
+def update_application_status(user_id:int, status:str):
+    normalized = (status or 'pending').strip().lower()
+    if normalized not in {'pending', 'approved', 'denied', 'closed'}:
+        normalized = 'pending'
+    with sqlite3.connect(DB_PATH) as con:
+        con.execute(
+            "INSERT INTO applications(user_id, submitted_at, status) VALUES(?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET status=excluded.status",
+            (int(user_id), normalized),
+        );
+        con.commit()
+
+_ROLE_NAME_SANITIZE = re.compile(r"[^a-z0-9]+")
+
+def _normalize_role_name(value: str | None) -> str:
+    if not value:
+        return ""
+    return _ROLE_NAME_SANITIZE.sub("", value.lower())
+
+async def find_role(guild: discord.Guild, role_id: int | None = None, role_name: str | None = None) -> discord.Role | None:
+    if guild is None:
+        return None
+
+    roles_cache = list(guild.roles)
+
+    async def ensure_roles():
+        nonlocal roles_cache
+        try:
+            roles_cache = await guild.fetch_roles()
+        except (discord.Forbidden, discord.HTTPException):
+            roles_cache = []
+
+    if role_id:
+        role = guild.get_role(role_id)
+        if role:
+            return role
+        await ensure_roles()
+        for candidate in roles_cache:
+            if candidate.id == role_id:
+                return candidate
+
+    if role_name:
+        target = _normalize_role_name(role_name)
+        if target:
+            if not roles_cache:
+                await ensure_roles()
+            for candidate in roles_cache:
+                normalized = _normalize_role_name(candidate.name)
+                if normalized == target or normalized.startswith(target):
+                    return candidate
+    return None
+
+async def process_application_decision(
+    bot: commands.Bot,
+    *,
+    applicant_id: int,
+    approved: bool,
+    reviewer_name: str,
+    reason: str = "",
+    guild: discord.Guild | None = None,
+    member: discord.Member | None = None,
+    review_message_id: int | None = None,
+    application_data: dict | None = None,
+):
+    resolved_data = dict(application_data or {})
+    entry = None
+    if not resolved_data:
+        entry = fetch_pending_application_entry(applicant_id, review_message_id)
+        if entry:
+            resolved_data = entry.get("data") or {}
+            if review_message_id is None:
+                review_message_id = entry.get("message_id")
+    else:
+        entry = fetch_pending_application_entry(applicant_id, review_message_id)
+        if entry and review_message_id is None:
+            review_message_id = entry.get("message_id")
+
+    guild_id_raw = resolved_data.get("guild_id")
+    if not guild_id_raw and review_message_id:
+        with sqlite3.connect(DB_PATH) as con:
+            row = con.execute("SELECT data FROM pending_applications WHERE message_id=?", (int(review_message_id),)).fetchone()
+        if row:
+            try:
+                payload = json.loads(row[0])
+                guild_id_raw = payload.get("guild_id")
+                if not resolved_data:
+                    resolved_data = payload
+            except Exception:
+                pass
+    if not guild_id_raw:
+        guild_id_raw = (
+            os.getenv("HOME_GUILD_ID")
+            or os.getenv("GUILD_ID")
+            or os.getenv("DISCORD_HOME_GUILD_ID")
+            or os.getenv("DISCORD_GUILD_ID")
+            or "0"
+        )
+    try:
+        guild_id = int(guild_id_raw)
+    except (TypeError, ValueError):
+        guild_id = 0
+
+    guild_obj = guild
+    if guild_obj is None and guild_id:
+        guild_obj = bot.get_guild(guild_id)
+    if guild_obj is None and guild_id:
+        try:
+            guild_obj = await bot.fetch_guild(guild_id)
+        except discord.HTTPException:
+            guild_obj = None
+    if guild_obj is None:
+        raise ValueError("Guild not found for application processing.")
+
+    member_obj = member or guild_obj.get_member(applicant_id)
+    if member_obj is None:
+        logging.warning("Application decision: cache miss for user %s in guild %s", applicant_id, guild_obj.id)
+        try:
+            member_obj = await guild_obj.fetch_member(applicant_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            member_obj = None
+    if member_obj is None:
+        try:
+            logging.warning("Application decision: fetch_member failed for %s; attempting query_members", applicant_id)
+            matches = await guild_obj.query_members(user_ids=[applicant_id], limit=1)
+            if matches:
+                member_obj = matches[0]
+        except (discord.Forbidden, discord.HTTPException):
+            member_obj = None
+    if member_obj is None:
+        logging.error(
+            "Application decision: unable to locate user %s in guild %s (%s)",
+            applicant_id,
+            guild_obj.id,
+            guild_obj.name,
+        )
+        raise ValueError("Applicant is not in the guild.")
+
+    status_label = 'approved' if approved else 'denied'
+    branch = (resolved_data.get("branch_choice") or resolved_data.get("branch") or "").strip()
+    if approved and branch:
+        branch_role_name = branch.title()
+        role = await find_role(guild_obj, role_name=branch_role_name)
+        if role:
+            try:
+                await member_obj.add_roles(role)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+    if approved:
+        verified = await find_role(
+            guild_obj,
+            role_id=VERIFIED_ROLE_ID,
+            role_name=VERIFIED_ROLE_NAME,
+        )
+        if verified:
+            try:
+                await member_obj.add_roles(verified)
+            except (discord.Forbidden, discord.HTTPException):
+                logging.warning(
+                    "Failed to add verified role %s (%s) to %s",
+                    verified.name,
+                    verified.id,
+                    member_obj.id,
+                )
+        else:
+            logging.warning(
+                "Verified role not found (id=%s, name=%s) in guild %s",
+                VERIFIED_ROLE_ID,
+                VERIFIED_ROLE_NAME,
+                guild_obj.id,
+            )
+    pending_role = await find_role(
+        guild_obj,
+        role_id=PENDING_ROLE_ID,
+        role_name=PENDING_ROLE_NAME,
+    )
+    if pending_role:
+        try:
+            await member_obj.remove_roles(pending_role)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+    if approved:
+        name = (resolved_data.get("name") or resolved_data.get("preferred_name") or "").strip()
+        pronouns = (resolved_data.get("pronouns") or "").strip()
+        nickname = build_application_nickname(name, pronouns)
+        if nickname:
+            try:
+                await member_obj.edit(nick=nickname)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    delete_pending(user_id=member_obj.id, message_id=review_message_id)
+    update_application_status(member_obj.id, status_label)
+
+    dm_text = f"Your application has been {status_label}."
+    if reason:
+        dm_text += f"\nReason: {reason}"
+    try:
+        await member_obj.send(dm_text)
+    except Exception:
+        pass
+
+    if approved:
+        try:
+            await send_welcome_message(bot, member_obj)
+        except Exception:
+            logging.exception("Failed to send welcome message for %s", member_obj.id)
+
+    log_channel = guild_obj.get_channel(TICKET_LOG_CHANNEL_ID)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Field", "Value"])
+    for key, value in (resolved_data or {}).items():
+        writer.writerow([key.replace('_', ' ').title(), value])
+    writer.writerow(["Decision", "Approved" if approved else "Denied"])
+    writer.writerow(["Reason", reason or "None provided"])
+    writer.writerow(["Reviewed By", reviewer_name])
+    writer.writerow(["Applicant", str(member_obj)])
+    buf.seek(0)
+    file = discord.File(io.BytesIO(buf.read().encode()), filename=f"{member_obj.id}_app_log.csv")
+    log_text = f"Application {status_label} for {member_obj.mention} by {reviewer_name}."
+    if reason:
+        log_text += f" Reason: {reason}"
+    if log_channel:
+        try:
+            await log_channel.send(log_text, file=file)
+        except Exception:
+            pass
+
+    return {
+        "user_id": member_obj.id,
+        "status": status_label,
+        "reviewer": reviewer_name,
+        "reason": reason,
+        "member": str(member_obj),
+        "guild_id": guild_obj.id,
+        "guild_name": guild_obj.name,
+    }
+
 def store_pending_application(message_id:int, user_id:int, data:dict):
     with sqlite3.connect(DB_PATH) as con:
         con.execute("INSERT OR REPLACE INTO pending_applications(message_id,user_id,data) VALUES(?,?,?)",
                     (int(message_id), int(user_id), json.dumps(data))); con.commit()
+
+def record_ticket_message(channel_id: int, message_id: int):
+    with sqlite3.connect(DB_PATH) as con:
+        con.execute("DELETE FROM tickets WHERE channel_id=?", (int(channel_id),))
+        con.execute(
+            "INSERT OR REPLACE INTO tickets(message_id,channel_id) VALUES(?,?)",
+            (int(message_id), int(channel_id)),
+        )
+        con.commit()
+
+ID_FOOTER_RE = re.compile(r"(\d{5,})")
+
+def parse_application_embed(embed: discord.Embed | None) -> tuple[int | None, dict]:
+    """Attempt to reconstruct application data from an embed."""
+    if embed is None:
+        return None, {}
+    data: dict[str, str] = {}
+    field_map = {
+        "preferred name": ("name", "preferred_name"),
+        "pronouns": ("pronouns",),
+        "branch": ("branch_choice", "branch"),
+        "status": ("status_choice", "status"),
+        "referral source": ("refer", "referral_source"),
+    }
+    for field in embed.fields:
+        field_name = (field.name or "").strip().lower()
+        if not field_name:
+            continue
+        value = field.value or ""
+        targets = field_map.get(field_name) or (field_name.replace(" ", "_"),)
+        for target in targets:
+            data[target] = value
+    applicant_id: int | None = None
+    footer_text = (embed.footer.text or "").strip() if embed.footer else ""
+    author_text = (embed.author.name or "").strip() if embed.author else ""
+    for source in (footer_text, author_text):
+        if not source:
+            continue
+        match = ID_FOOTER_RE.search(source)
+        if match:
+            try:
+                applicant_id = int(match.group(1))
+                break
+            except ValueError:
+                continue
+    if footer_text and "(" in footer_text and ")" in footer_text:
+        tag = footer_text.rsplit("(", 1)[0].strip()
+        if tag:
+            data.setdefault("discord_tag", tag)
+    return applicant_id, data
 
 def delete_pending(*, user_id:int|None=None, message_id:int|None=None):
     with sqlite3.connect(DB_PATH) as con:
@@ -202,6 +570,20 @@ class ApplicationFormView(discord.ui.View):
                 return
 
             staff_ch = guild.get_channel(STAFF_REVIEW_CHANNEL_ID)
+            data["discord_tag"] = str(i.user)
+            data["discord_id"] = str(i.user.id)
+            try:
+                display_name = i.user.display_name
+            except AttributeError:
+                display_name = getattr(i.user, "nick", None) or getattr(i.user, "name", None)
+            if display_name:
+                data["discord_display_name"] = display_name
+            username = getattr(i.user, "name", None)
+            if username:
+                data["discord_username"] = username
+            global_name = getattr(i.user, "global_name", None)
+            if global_name:
+                data["discord_global_name"] = global_name
             embed = discord.Embed(title="New Application", color=discord.Color.blue())
             embed.add_field(name="Preferred Name", value=data["name"], inline=False)
             embed.add_field(name="Pronouns", value=data["pronouns"], inline=False)
@@ -275,24 +657,10 @@ class ApplicationReviewView(discord.ui.View):
     def _load_application_data(self, message_id: int | None = None) -> dict:
         if isinstance(self.data, dict) and self.data:
             return self.data
-        row = None
         mid = message_id or self.review_msg_id
-        with sqlite3.connect(DB_PATH) as con:
-            if mid:
-                row = con.execute(
-                    "SELECT data FROM pending_applications WHERE message_id=?",
-                    (int(mid),),
-                ).fetchone()
-            if not row:
-                row = con.execute(
-                    "SELECT data FROM pending_applications WHERE user_id=? ORDER BY message_id DESC LIMIT 1",
-                    (self.applicant_id,),
-                ).fetchone()
-        if row:
-            try:
-                self.data = json.loads(row[0])
-            except (json.JSONDecodeError, TypeError):
-                self.data = {}
+        entry = fetch_pending_application_entry(self.applicant_id, mid)
+        if entry:
+            self.data = entry.get("data") or {}
         return self.data or {}
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="application_approve")
     async def approve(self, i: discord.Interaction, _: discord.ui.Button):
@@ -334,35 +702,21 @@ class ApplicationReviewView(discord.ui.View):
                             member = None
                     if not member:
                         await send_application_error(mi, "User not found."); return
-                    if approved:
-                        branch = data.get("branch_choice")
-                        if branch:
-                            role = discord.utils.get(guild.roles, name=branch)
-                            if role:
-                                try: await member.add_roles(role)
-                                except discord.Forbidden: pass
-                        verified = discord.utils.get(guild.roles, name="Verified")
-                        pending = discord.utils.get(guild.roles, name="Pending Application")
-                        if verified:
-                            try: await member.add_roles(verified)
-                            except discord.Forbidden: pass
-                        if pending:
-                            try: await member.remove_roles(pending)
-                            except discord.Forbidden: pass
-                        name = (data.get("name") or data.get("preferred_name") or "").strip()
-                        pronouns = (data.get("pronouns") or "").strip()
-                        delete_pending(user_id=member.id, message_id=original_message_id)
-                        nickname = build_application_nickname(name, pronouns)
-                        if nickname:
-                            try:
-                                await member.edit(nick=nickname)
-                            except (discord.Forbidden, discord.HTTPException):
-                                pass
-                        dm_text = f"Your application has been approved.\nReason: {ms.reason.value}"
-                    else:
-                        dm_text = f"Your application has been denied.\nReason: {ms.reason.value}"
-                    try: await member.send(dm_text)
-                    except Exception: pass
+                    reviewer = str(mi.user)
+                    bot_ref = mi.client
+                    if not isinstance(bot_ref, commands.Bot):
+                        raise RuntimeError("Bot reference unavailable for application decision.")
+                    await process_application_decision(
+                        bot_ref,
+                        applicant_id=member.id,
+                        approved=approved,
+                        reviewer_name=reviewer,
+                        reason=ms.reason.value,
+                        guild=guild,
+                        member=member,
+                        review_message_id=original_message_id,
+                        application_data=data,
+                    )
 
                     for c in self.children: c.disabled = True
                     try:
@@ -373,17 +727,6 @@ class ApplicationReviewView(discord.ui.View):
                         
                     await mi.response.send_message(
                         f"Application {'approved' if approved else 'denied'} for {member.mention}.", ephemeral=True)
-
-                    buf = io.StringIO(); w = csv.writer(buf)
-                    w.writerow(["Field","Value"])
-                    for k,v in data.items(): w.writerow([k.replace('_',' ').title(), v])
-                    w.writerow(["Decision","Approved" if approved else "Denied"])
-                    w.writerow(["Reason", ms.reason.value]); w.writerow(["Reviewed By", str(mi.user)])
-                    w.writerow(["Applicant", str(member)]); buf.seek(0)
-                    file = discord.File(io.BytesIO(buf.read().encode()), filename=f"{member.id}_app_log.csv")
-                    log = guild.get_channel(TICKET_LOG_CHANNEL_ID)
-                    if log: await log.send(f"Application log for {member.mention}", file=file)
-                    delete_pending(message_id=original_message_id)
                 except Exception as exc:
                     log_application_error("application_decision_modal", exc)
                     await send_application_error(mi, "An error occurred handling this decision. See application_errors.log for details.")
@@ -406,11 +749,9 @@ class ApplicationReviewView(discord.ui.View):
         ch = await interaction.guild.create_text_channel(
             name=f"ticket-{member.name}", category=category, overwrites=overwrites,
             topic=f"Application of {member.display_name}")
-        await ch.send(f"{member.mention}, a staff member will assist you shortly.", view=TicketCloseView())
+        ticket_msg = await ch.send(f"{member.mention}, a staff member will assist you shortly.", view=TicketCloseView())
         await interaction.response.send_message(f"Ticket created: {ch.mention}", ephemeral=True)
-        with sqlite3.connect(DB_PATH) as con:
-            con.execute("INSERT OR REPLACE INTO tickets(message_id,channel_id) VALUES(?,?)",
-                        (interaction.message.id, ch.id)); con.commit()
+        record_ticket_message(ch.id, ticket_msg.id)
 
 class TicketCloseView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
@@ -431,6 +772,64 @@ class TicketCloseView(discord.ui.View):
                 await mi.response.send_message("Ticket closed. This channel will now self destruct", ephemeral=True)
                 await asyncio.sleep(2); await interaction.channel.delete()
         await interaction.response.send_modal(Close())
+
+async def refresh_ticket_views(bot: commands.Bot):
+    """Ensure every tracked ticket message keeps an active close button view."""
+    with sqlite3.connect(DB_PATH) as con:
+        rows = con.execute("SELECT message_id, channel_id FROM tickets").fetchall()
+    if not rows:
+        return
+    bot_id = bot.user.id if bot.user else None
+    for stored_message_id, channel_id in rows:
+        channel = bot.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                continue
+        message = None
+        replaced = False
+        if stored_message_id:
+            try:
+                message = await channel.fetch_message(stored_message_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                message = None
+        if message is None:
+            try:
+                async for candidate in channel.history(limit=200, oldest_first=True):
+                    if bot_id and candidate.author.id != bot_id:
+                        continue
+                    content = (candidate.content or "").lower()
+                    if candidate.components or TICKET_GREETING_PHRASE in content:
+                        message = candidate
+                        replaced = True
+                        break
+            except (discord.Forbidden, discord.HTTPException):
+                message = None
+        if message is None:
+            try:
+                message = await channel.send(
+                    "Ticket controls restored. Use this button to close the ticket when finished.",
+                    view=TicketCloseView(),
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+            replaced = True
+        if replaced or message.id != stored_message_id:
+            record_ticket_message(channel.id, message.id)
+        if not message.components:
+            try:
+                await message.edit(view=TicketCloseView())
+            except (discord.Forbidden, discord.HTTPException):
+                try:
+                    message = await channel.send(
+                        "Ticket controls restored. Use this button to close the ticket when finished.",
+                        view=TicketCloseView(),
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+                record_ticket_message(channel.id, message.id)
+        bot.add_view(TicketCloseView(), message_id=message.id)
 
 # Cog Setup
 class Applications(commands.Cog):
@@ -462,21 +861,24 @@ class Applications(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         with sqlite3.connect(DB_PATH) as con:
             row = con.execute("SELECT user_id,data FROM pending_applications WHERE message_id=?", (mid,)).fetchone()
+        msg: discord.Message | None = None
         if not row:
             try:
                 msg = await ch.fetch_message(mid)
-                emb = msg.embeds[0]; data = {}
-                for f in emb.fields: data[f.name.lower().replace(" ","_")] = f.value
-                uid = int((emb.footer.text or "").split("(")[-1].rstrip(")"))
-                store_pending_application(mid, uid, data); row = (uid, json.dumps(data))
-            except Exception as e:
-                await interaction.followup.send(f"Could not backfill: {e}", ephemeral=True); return
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                await interaction.followup.send(f"Could not backfill: {exc}", ephemeral=True); return
+            embed = msg.embeds[0] if msg.embeds else None
+            uid, parsed = parse_application_embed(embed)
+            if not uid:
+                await interaction.followup.send("Unable to determine applicant from embed.", ephemeral=True); return
+            store_pending_application(mid, uid, parsed); row = (uid, json.dumps(parsed))
+        if msg is None:
+            try:
+                msg = await ch.fetch_message(mid)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                await interaction.followup.send(f"Failed to fetch message: {exc}", ephemeral=True); return
         uid, data_json = row
         data = json.loads(data_json)
-        try:
-            msg = await ch.fetch_message(mid)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
-            await interaction.followup.send(f"Failed to fetch message: {exc}", ephemeral=True); return
         refreshed_view = ApplicationReviewView(uid, data, review_msg_id=mid)
         status_msg = "View refreshed."
         try:
