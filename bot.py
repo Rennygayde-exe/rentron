@@ -1116,7 +1116,7 @@ async def on_ready():
     discord.opus.load_opus("/usr/lib/libopus.so")
     print(">>> Opus loaded?", discord.opus.is_loaded())
 
-    # Command Reg
+                 
     bot.add_command(general.reload_responses)
     bot.add_command(general.list_responses)
     general.setup(bot.tree)
@@ -1125,10 +1125,10 @@ async def on_ready():
     bot.tree.add_command(blackbird)
     await bot.tree.sync()
 
-    # Load responses
+                    
     r.load_responses()
     general.load_out_of_office()
-    # Application Button Refresh
+                                
     bot.add_view(ApplicationView())
     bot.add_view(TicketCloseView())
     bot.add_view(CaptchaView())
@@ -1192,7 +1192,7 @@ async def on_member_join(member: discord.Member):
         dm = await member.create_dm()
         await dm.send(embed=embed, view=CaptchaView())
     except discord.Forbidden:
-        pass  # User has DMs disabled; staff can manually verify
+        pass                                                    
 
 
 @bot.event

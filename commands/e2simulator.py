@@ -99,7 +99,7 @@ class E2Simulator(commands.Cog):
         )
 
     def _sim_first_order(self, params, dose, interval, duration):
-        t_half_abs = params.get("k1") or 1.0  # dummy
+        t_half_abs = params.get("k1") or 1.0         
         t_half_elim = params.get("k2") or 24.0
         k_abs = math.log(2)/t_half_abs
         k_elim = math.log(2)/t_half_elim
@@ -116,7 +116,7 @@ class E2Simulator(commands.Cog):
             dA = -k_abs*A*dt
             dC = (k_abs*A - k_elim*C)*dt
             A += dA; C += dC
-            mg_per_mL = (C/1.0)/1000  # Vd=1 L
+            mg_per_mL = (C/1.0)/1000          
             times.append(t/24); conc.append(mg_per_mL)
         return times, conc
 

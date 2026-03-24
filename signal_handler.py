@@ -48,7 +48,7 @@ async def signal_command(
         if proc.returncode == 0:
             await interaction.followup.send("Message sent successfully.")
         else:
-            # Show only the last non-empty line to avoid exposing system paths
+                                                                              
             lines = [l for l in stderr.decode().splitlines() if l.strip()]
             error_msg = lines[-1] if lines else "Unknown error."
             await interaction.followup.send(f"Failed to send: `{error_msg}`")

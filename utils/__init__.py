@@ -9,7 +9,7 @@ class DummyUser:
     def __init__(self):
         self.mention = "@Bot"
         self.id = 0
-        self.roles = [DummyRole("Staff")]  # Pretend bot has "Staff" role
+        self.roles = [DummyRole("Staff")]                                
 
 class DummyMessage:
     async def edit(self, *args, **kwargs):
@@ -23,7 +23,7 @@ class DummyResponse:
         pass
 
     async def send(self, *args, **kwargs):
-        return DummyMessage()  # ← return dummy message object with .edit()
+        return DummyMessage()                                              
     
     async def send_message(self, *args, **kwargs):
         pass

@@ -136,7 +136,7 @@ def build_application_nickname(name: str, pronouns: str) -> str | None:
         if len(candidate) <= 32:
             return candidate
 
-        available = 32 - len(name_clean) - 3  # accounts for space and parentheses
+        available = 32 - len(name_clean) - 3                                      
         if available > 1:
             truncated_pronouns = pronouns_clean[:available].rstrip()
             if truncated_pronouns:
@@ -147,7 +147,7 @@ def build_application_nickname(name: str, pronouns: str) -> str | None:
     return name_clean[:32]
 
 
-# SQL Shit
+          
 def init_db():
     with sqlite3.connect(DB_PATH) as con:
         c = con.cursor()
@@ -666,7 +666,7 @@ class ApplicationFormView(discord.ui.View):
             await i.response.send_message("Submitted.", ephemeral=False)
 
         except Exception as e:
-            # Logging/ So i can see if its silently failing -ren
+                                                                
             if not i.response.is_done():
                 await i.response.send_message("Unexpected error submitting. Try again.", ephemeral=False)
             else:
@@ -693,7 +693,7 @@ class ApplicationView(discord.ui.View):
         try:
             dm = await interaction.user.create_dm()
             msg = await dm.send("Let's begin your application!", view=ApplicationFormView())
-            # store server id
+                             
             session_set(msg.id, interaction.user.id, {"guild_id": interaction.guild.id})
             await interaction.response.send_message("Check your DMs.", ephemeral=True)
         except discord.Forbidden:
@@ -891,7 +891,7 @@ async def refresh_ticket_views(bot: commands.Bot):
                 record_ticket_message(channel.id, message.id)
         bot.add_view(TicketCloseView(), message_id=message.id)
 
-# Cog Setup
+           
 class Applications(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot

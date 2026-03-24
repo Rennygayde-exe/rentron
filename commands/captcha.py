@@ -7,7 +7,7 @@ def _gen_question() -> tuple[str, int]:
     """Generate a simple arithmetic captcha. Returns (question_label, answer)."""
     a = random.randint(2, 15)
     b = random.randint(2, 15)
-    op = random.choice(['+', '+', '*'])  # weighted towards addition
+    op = random.choice(['+', '+', '*'])                             
     if op == '+':
         return f"What is {a} + {b}?", a + b
     else:

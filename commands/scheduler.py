@@ -16,7 +16,7 @@ DB_PATH = Path(__file__).resolve().parents[1] / "data" / "scheduled_messages.db"
 CHECK_INTERVAL_SECONDS = 30
 DEFAULT_TZ_NAME = os.getenv("SCHEDULER_DEFAULT_TZ", "").strip()
 LOCAL_TZINFO = datetime.now().astimezone().tzinfo or timezone.utc
-_YEAR_OPTIONS_SPAN = 3  # current year + next 2
+_YEAR_OPTIONS_SPAN = 3                         
 _TIME_OPTIONS = [f"{h:02d}:00" for h in range(24)]
 _DAY_SPECIAL_VALUE = "25-31"
 _TIME_24H_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -68,7 +68,7 @@ def _parse_time_only(raw: str, tzinfo: ZoneInfo) -> Optional[datetime]:
     text = (raw or "").strip().lower()
     now_local = datetime.now(tzinfo)
 
-    # 2217, 930
+               
     if re.fullmatch(r"\d{3,4}", text):
         if len(text) == 3:
             hour = int(text[0])
@@ -83,7 +83,7 @@ def _parse_time_only(raw: str, tzinfo: ZoneInfo) -> Optional[datetime]:
             candidate += timedelta(days=1)
         return candidate
 
-    # 10pm, 7 am
+                
     m_ampm = re.fullmatch(r"(\d{1,2})\s*(am|pm)", text)
     if m_ampm:
         hour = int(m_ampm.group(1))
@@ -99,7 +99,7 @@ def _parse_time_only(raw: str, tzinfo: ZoneInfo) -> Optional[datetime]:
             candidate += timedelta(days=1)
         return candidate
 
-    # 22:17 or 10:05pm
+                      
     m_clock = re.fullmatch(r"(\d{1,2}):(\d{2})\s*(am|pm)?", text)
     if m_clock:
         hour = int(m_clock.group(1))
@@ -141,7 +141,7 @@ def parse_schedule_datetime(raw_time: str, tz_name: str) -> tuple[Optional[datet
     if tzinfo is None:
         return None, tz_label, f"Unknown timezone '{tz_label}'. Use IANA names like 'UTC' or 'America/New_York'."
 
-    # Try simple clock formats first so bare "2217" becomes 22:17 today.
+                                                                        
     clock_dt = _parse_time_only(raw_time, tzinfo)
     if clock_dt:
         return clock_dt.astimezone(timezone.utc), tz_label, None
@@ -404,7 +404,7 @@ class ScheduleMessageModal(Modal, title="Schedule message"):
             await interaction.response.send_message("Message cannot be empty.", ephemeral=True)
             return
 
-        # Resolve day
+                     
         if self.require_day_override:
             day_raw = (self.day_override.value or "").strip() if self.day_override else ""
             try:
@@ -422,7 +422,7 @@ class ScheduleMessageModal(Modal, title="Schedule message"):
                 await interaction.response.send_message("Invalid day selection.", ephemeral=True)
                 return
 
-        # Resolve minutes
+                         
         minute_raw = (self.minute_input.value or "").strip()
         if minute_raw:
             try:
@@ -522,7 +522,7 @@ class SchedulePickerView(View):
         return interaction.user.id == self.user_id
 
     async def _capture(self, interaction: Interaction):
-        # Defer so the menu stays responsive while the user keeps selecting.
+                                                                            
         try:
             await interaction.response.defer(ephemeral=True)
         except Exception:
@@ -543,7 +543,7 @@ class SchedulePickerView(View):
             await interaction.response.send_message("Please pick month, day, year, and time.", ephemeral=True)
             return
 
-        # Validate date/time quickly.
+                                     
         try:
             hour = int(time_value.split(":")[0])
             minute = int(time_value.split(":")[1])

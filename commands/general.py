@@ -40,7 +40,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
 
 _FRAMES = 30
-_FRAME_DURATION = 60  # ms per frame
+_FRAME_DURATION = 60                
 
 OUT_OF_OFFICE_FILE = Path("data/out_of_office.json")
 OUT_OF_OFFICE: dict[str, dict[str, str]] = {}
@@ -480,7 +480,7 @@ async def rennygadetarget(
             })
 
     frames = []
-    gravity = tile_size / _FRAMES  # pixels per frame after start
+    gravity = tile_size / _FRAMES                                
 
     for frame_i in range(_FRAMES):
         canvas = Image.new("RGBA", (w, h))
@@ -1531,7 +1531,7 @@ async def stuartlittle(interaction: discord.Interaction):
     """Send a random Stuart Little slander quote or image."""
     await interaction.response.defer()
 
-    # 50/50: send an image or text
+                                  
     if random.choice([True, False]):
         if not IMAGE_DIR.exists():
             await interaction.followup.send("No images directory found.")

@@ -109,7 +109,7 @@ class AuditRestore(commands.Cog):
         existing_channels = {c.name: c for c in guild.channels}
         category_map = {}
 
-        # Create categories
+                           
         for chdata in snapshot["channels"]:
             if chdata["type"] == "category" and chdata["name"] not in existing_channels:
                 try:
@@ -120,7 +120,7 @@ class AuditRestore(commands.Cog):
                 except Exception as e:
                     print(f"Category restore failed: {e}")
 
-        # Create text/voice channels
+                                    
         for chdata in snapshot["channels"]:
             if chdata["type"] in ("text", "voice") and chdata["name"] not in existing_channels:
                 try:

@@ -19,10 +19,10 @@ while True:
     page += 1
     if len(chunk) < PAGE_SIZE:
         break
-    time.sleep(0.5)  # be nice to their API
+    time.sleep(0.5)                        
 
 print(f"Total fetched: {len(players)}")
-print(players[:3])  # preview
+print(players[:3])           
 
 init_xp_db()
 

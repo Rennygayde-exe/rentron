@@ -111,13 +111,13 @@ class MemberMetrics(commands.Cog):
         self._baseline_synced = False
         _ensure_db()
 
-    #
-    # Persistence helpers
-    #
+     
+                         
+     
     def _record_join(self, guild_id: int, user_id: int, joined_ts: float) -> None:
         with sqlite3.connect(DB_PATH) as con:
             cur = con.cursor()
-            # Close out any dangling intervals before adding a new join.
+                                                                        
             cur.execute(
                 """
                 UPDATE member_intervals
@@ -187,9 +187,9 @@ class MemberMetrics(commands.Cog):
                 )
                 con.commit()
 
-    #
-    # Event listeners
-    #
+     
+                     
+     
     @commands.Cog.listener()
     async def on_ready(self):
         await self._sync_current_members()
@@ -205,9 +205,9 @@ class MemberMetrics(commands.Cog):
         left_ts = datetime.now(timezone.utc).timestamp()
         self._record_leave(member.guild.id, member.id, joined_ts, left_ts)
 
-    #
-    # Command(s)
-    #
+     
+                
+     
     @app_commands.command(
         name="unique_users",
         description="Count unique members who were in the server between two dates.",
@@ -231,7 +231,7 @@ class MemberMetrics(commands.Cog):
             )
             return
 
-        # Swap if the user provided them backwards.
+                                                   
         if start_dt > end_dt:
             start_dt, end_dt = end_dt, start_dt
 

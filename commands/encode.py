@@ -54,7 +54,7 @@ class GPGEnc(commands.Cog):
             lines.append("".join(random.choice(RUNESET) for _ in range(w)))
         return "```\n" + "\n".join(lines) + "\n```"
 
-    # encode
+            
     @app_commands.command(name="encode", description="Encrypt a message; returns matrix runes and attaches token.asc (PGP-wrapped)")
     async def encode(self, interaction: discord.Interaction, message: str):
         recipient = self.get_recipient_for(interaction.user)
@@ -92,7 +92,7 @@ class GPGEnc(commands.Cog):
         except Exception:
             await interaction.response.send_message("Invalid token or decryption failed.", ephemeral=True)
 
-    # GPG management
+                    
     @app_commands.command(name="gpg_import", description="Import a friend's GPG public key")
     async def gpg_import(self, interaction: discord.Interaction, key_file: discord.Attachment):
         if not key_file.filename.endswith(".asc"):
@@ -131,7 +131,7 @@ class GPGEnc(commands.Cog):
         else:
             await interaction.response.send_message("That user does not have a GPG key linked.", ephemeral=True)
 
-    # export/rotate
+                   
     @app_commands.command(name="exportkey", description="Export YOUR Fernet key encrypted with YOUR linked GPG key")
     async def exportkey(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)

@@ -377,7 +377,7 @@ class DeadweightCog(commands.Cog):
             if last_dt < since:
                 stale_responses.append((response_id, entry, last_seen, role_name))
 
-        # Cogs with no activity
+                               
         command_to_cog: dict[str, str] = {}
         for cmd in app_cmds:
             binding = getattr(cmd, "binding", None)

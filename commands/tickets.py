@@ -210,7 +210,7 @@ class TicketClaimButton(Button):
         super().__init__(label="Claim Selected", style=discord.ButtonStyle.primary)
 
     async def callback(self, interaction: Interaction):
-        parent: TicketQueueView = self.view  # type: ignore
+        parent: TicketQueueView = self.view                
         await parent.claim_selected(interaction)
 
 

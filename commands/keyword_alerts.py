@@ -1,4 +1,4 @@
-# commands/keyword_alerts.py
+                            
 import os
 import re
 import json
@@ -179,7 +179,7 @@ class KeywordAlerts(commands.Cog):
                            f"Link: {jump}\n\n"
                            f"{m.content[:1500]}")
 
-                # ping Staff role only
+                                      
                 role = discord.utils.get(m.guild.roles, name=STAFF_ROLE_NAME)
                 am = None
                 if role:

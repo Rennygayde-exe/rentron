@@ -124,7 +124,7 @@ def record_observation(busy_count: int, capacity: int = 12, source: Optional[str
     }
     history = load_history()
     history.append(entry)
-    # Keep the file from growing unbounded.
+                                           
     if len(history) > 512:
         history = history[-512:]
     _ensure_history_dir()

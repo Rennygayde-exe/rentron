@@ -161,7 +161,7 @@ class Moderation(commands.Cog):
                             seen_ids.add(target_id)
                             banned += 1
                         except Exception as e:
-                            # fallback search if we also have a username
+                                                                        
                             uname = (entry.get("username") or "").strip().lower()
                             if uname:
                                 user_obj = name_map.get(uname)
@@ -181,7 +181,7 @@ class Moderation(commands.Cog):
                                 failed += 1
                                 print(f"Failed to ban {target_id}: {e}")
                 else:
-                    # No ID = try username-only fallback
+                                                        
                     uname = (entry.get("username") or "").strip().lower()
                     if not uname:
                         failed += 1

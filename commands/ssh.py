@@ -8,13 +8,13 @@ from discord.ext import commands
 from discord.ext import tasks
 
 ALLOWED_USER_ID = int(os.getenv("SHELL_ALLOWED_USER_ID", "669626735385640993"))
-SESSION_TIMEOUT_SECONDS = int(os.getenv("SHELL_SESSION_TIMEOUT", "300"))  # 5 min default
+SESSION_TIMEOUT_SECONDS = int(os.getenv("SHELL_SESSION_TIMEOUT", "300"))                 
 
 
 class ShellSession(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # sessions: user_id -> {"proc": ..., "last_active": float, "dm": TextChannel}
+                                                                                     
         self.sessions: dict[int, dict] = {}
         self._timeout_task.start()
 
