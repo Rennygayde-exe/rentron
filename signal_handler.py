@@ -1,7 +1,9 @@
 import os
-import subprocess
+import asyncio
 import discord
 from discord import app_commands
+
+SIGNAL_TIMEOUT = int(os.getenv("SIGNAL_TIMEOUT", "30"))
 
 @app_commands.command(
     name="send_signal",
@@ -31,13 +33,25 @@ async def signal_command(
         else:
             args.append(recipient)
 
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=SIGNAL_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await interaction.followup.send("Signal CLI timed out.")
+            return
 
-        if result.returncode == 0:
+        if proc.returncode == 0:
             await interaction.followup.send("Message sent successfully.")
         else:
-            error_msg = result.stderr.strip() or "Unknown error."
+            # Show only the last non-empty line to avoid exposing system paths
+            lines = [l for l in stderr.decode().splitlines() if l.strip()]
+            error_msg = lines[-1] if lines else "Unknown error."
             await interaction.followup.send(f"Failed to send: `{error_msg}`")
 
     except Exception as e:
-        await interaction.followup.send(f"Exception: {e}")
+        await interaction.followup.send(f"Exception: {type(e).__name__}")

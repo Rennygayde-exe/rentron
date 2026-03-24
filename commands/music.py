@@ -13,7 +13,14 @@ YDL_COMMON_OPTS = {
     "quiet": True,
     "noplaylist": True,
     "default_search": "ytsearch",
+    "js_runtimes": {"node": {}},
+    "remote_components": ["ejs:github"],
 }
+
+COOKIES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "yt_cookies.txt"
+)
 
 def _normalize_po_token(raw: str | None, client: str) -> str | None:
     if not raw:
@@ -31,18 +38,18 @@ def _build_ydl_options():
     opts: list[dict] = [
         {
             **YDL_COMMON_OPTS,
-            "format": (
-                "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
-                "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
-                "bestaudio[protocol^=http][acodec!=none]/"
-                "bestaudio"
-            ),
-            "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+            "format": "bestaudio/best",
+            "extractor_args": {"youtube": {"player_client": ["tv_embedded"]}},
         },
         {
             **YDL_COMMON_OPTS,
             "format": "bestaudio/best",
-            "extractor_args": {"youtube": {"player_client": ["web"]}},
+            "extractor_args": {"youtube": {"player_client": ["tv"]}},
+        },
+        {
+            **YDL_COMMON_OPTS,
+            "format": "bestaudio/best",
+            "extractor_args": {"youtube": {"player_client": ["web_creator"]}},
         },
     ]
 
@@ -141,8 +148,9 @@ class Music(commands.Cog):
 
         def _do():
             last_err: Exception | None = None
+            cookie_kwargs = {"cookiefile": COOKIES_FILE} if os.path.exists(COOKIES_FILE) else {}
             for override in YDL_OPTS:
-                opts = {**override}
+                opts = {**override, **cookie_kwargs}
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(query, download=False)
@@ -399,6 +407,20 @@ class Music(commands.Cog):
         state = self._state(interaction.guild_id)
         state.autoplay = (mode_l == "on")
         await interaction.response.send_message(f"Autoplay {'enabled' if state.autoplay else 'disabled'}.", ephemeral=True)
+
+
+    @app_commands.command(name="cookies", description="Upload YouTube cookies file (Netscape format .txt)")
+    @app_commands.describe(file="Netscape cookies .txt file exported from your browser")
+    async def cookies(self, interaction: discord.Interaction, file: discord.Attachment):
+        await interaction.response.defer(ephemeral=True)
+        if not file.filename.endswith(".txt"):
+            await interaction.followup.send("Please attach a .txt file in Netscape cookie format.", ephemeral=True)
+            return
+        data = await file.read()
+        os.makedirs(os.path.dirname(COOKIES_FILE), exist_ok=True)
+        with open(COOKIES_FILE, "wb") as f:
+            f.write(data)
+        await interaction.followup.send("Cookies saved. yt-dlp will use them for the next song.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

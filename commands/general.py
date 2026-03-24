@@ -112,36 +112,57 @@ def _user_is_admin(interaction: Interaction) -> bool:
     return bool(perms)
 
 
-def create_github_issue(title, body, labels=[]):
-    import requests
-    import os
-
-    repo = os.getenv("GITHUB_REPO")
-    token = os.getenv("GITHUB_TOKEN")
-
+async def _create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, dict]:
+    token = os.getenv("GITHUB_GUEST_TOKEN") or GITHUB_TOKEN
     headers = {
         "Authorization": f"token {token}",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
     }
+    data = {"title": title, "body": body, "labels": labels}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+            json=data,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            return resp.status, await resp.json()
 
-    data = {
-        "title": title,
-        "body": body,
-        "labels": labels
-    }
 
-    response = requests.post(
-        f"https://api.github.com/repos/{repo}/issues",
-        json=data,
-        headers=headers
+class IssueModal(Modal, title="Submit GitHub Issue"):
+    title_input = TextInput(label="Title", max_length=80)
+    description_input = TextInput(
+        label="Description", style=discord.TextStyle.paragraph, required=False
     )
 
-    return response.status_code, response.json()
+    def __init__(self, labels: list[str]):
+        super().__init__()
+        self.labels = labels
+
+    async def on_submit(self, interaction: Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        body = self.description_input.value.strip() or "No description provided."
+        try:
+            status, data = await _create_github_issue(
+                self.title_input.value.strip(), body, self.labels
+            )
+        except aiohttp.ClientError as exc:
+            await interaction.followup.send(f"Network error: {exc}", ephemeral=True)
+            return
+        if status == 201:
+            await interaction.followup.send(
+                f"Issue created: {data['html_url']}", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"GitHub returned {status}: `{data.get('message', 'unknown error')}`",
+                ephemeral=True,
+            )
+
+
 class LabelSelectView(View):
     def __init__(self):
         super().__init__(timeout=300)
-        self.selected_labels = []
-
         self.label_select = Select(
             placeholder="Select labels for the issue",
             min_values=1,
@@ -150,38 +171,23 @@ class LabelSelectView(View):
                 discord.SelectOption(label="bug", description="Something isn't working"),
                 discord.SelectOption(label="feature", description="Suggest a new idea"),
                 discord.SelectOption(label="enhancement", description="Improve existing feature"),
-                discord.SelectOption(label="documentation", description="Docs or info issues")
-            ]
+                discord.SelectOption(label="documentation", description="Docs or info issues"),
+            ],
         )
         self.label_select.callback = self.select_callback
         self.add_item(self.label_select)
 
-    async def select_callback(self, interaction: Interaction):
-        self.selected_labels = self.label_select.values
+    async def select_callback(self, interaction: Interaction) -> None:
+        await interaction.response.send_modal(IssueModal(self.label_select.values))
 
-        class IssueModal(Modal, title="Submit GitHub Issue"):
-            title_input = TextInput(label="Title", max_length=80)
-            description_input = TextInput(label="Description", style=discord.TextStyle.paragraph, required=False)
-
-            async def on_submit(modal_self, modal_interaction: Interaction):
-                status, data = create_github_issue(
-                    modal_self.title_input.value,
-                    modal_self.description_input.value or "No description provided.",
-                    self.selected_labels
-                )
-                if status == 201:
-                    await modal_interaction.response.send_message(
-                        f"Issue created: {data['html_url']}", ephemeral=True
-                    )
-                else:
-                    await modal_interaction.response.send_message(
-                        f"Failed to create issue: `{data.get('message')}`", ephemeral=True
-                    )
-
-        await interaction.response.send_modal(IssueModal())
 
 @app_commands.command(name="gitissue", description="Submit a GitHub issue with labels.")
-async def gitissue(interaction: Interaction):
+async def gitissue(interaction: Interaction) -> None:
+    if not GITHUB_REPO or not (os.getenv("GITHUB_GUEST_TOKEN") or GITHUB_TOKEN):
+        await interaction.response.send_message(
+            "GitHub integration is not configured.", ephemeral=True
+        )
+        return
     await interaction.response.send_message(
         "Select labels for your GitHub issue:", view=LabelSelectView(), ephemeral=True
     )

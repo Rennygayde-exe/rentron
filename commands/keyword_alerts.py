@@ -1,12 +1,19 @@
 # commands/keyword_alerts.py
-import os, re, json, asyncio
+import os
+import re
+import json
+import asyncio
+import logging
 from pathlib import Path
 from typing import Literal
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 
+log = logging.getLogger(__name__)
+
 STORE = Path(os.getenv("KEYWORD_ALERTS_PATH") or Path(__file__).resolve().parents[1] / "data" / "keyword_alerts.json")
+STAFF_ROLE_NAME = os.getenv("STAFF_ROLE_NAME", "Staff")
 STORE.parent.mkdir(parents=True, exist_ok=True)
 
 def _now(): return discord.utils.utcnow().isoformat()
@@ -21,8 +28,11 @@ class KeywordAlerts(commands.Cog):
 
     def _load(self):
         if STORE.exists():
-            try: self._data = json.loads(STORE.read_text(encoding="utf-8"))
-            except: self._data = {"guilds": {}}
+            try:
+                self._data = json.loads(STORE.read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.warning("keyword_alerts: failed to load store, starting fresh: %s", exc)
+                self._data = {"guilds": {}}
         if "guilds" not in self._data: self._data = {"guilds": {}}
 
     async def _save(self):
@@ -170,7 +180,7 @@ class KeywordAlerts(commands.Cog):
                            f"{m.content[:1500]}")
 
                 # ping Staff role only
-                role = discord.utils.get(m.guild.roles, name="Staff")
+                role = discord.utils.get(m.guild.roles, name=STAFF_ROLE_NAME)
                 am = None
                 if role:
                     content = f"{role.mention}\n{content}"
@@ -180,8 +190,10 @@ class KeywordAlerts(commands.Cog):
 
                 try:
                     await out_ch.send(content, allowed_mentions=am)
-                except:pass
-            except Exception:
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    log.warning("keyword_alerts: failed to send alert for rule #%s: %s", r["id"], exc)
+            except Exception as exc:
+                log.error("keyword_alerts: error processing rule #%s on message %s: %s", r.get("id"), m.id, exc)
                 continue
 
 async def setup(bot: commands.Bot):

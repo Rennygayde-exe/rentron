@@ -1,11 +1,7 @@
 from __future__ import annotations
-import json
-import logging
-import re
+import json, re
 from pathlib import Path
 from typing import Iterable
-
-log = logging.getLogger(__name__)
 
 RESPONSES_FILE = Path("responses.json")
 RESPONSES: list[dict] = []
@@ -33,8 +29,7 @@ def compile_triggers() -> None:
                 pat = s[3:] if s.startswith("re:") else s
                 try:
                     pats.append(re.compile(pat, re.I))
-                except re.error as exc:
-                    log.warning("responses.py: skipping invalid regex pattern %r: %s", pat, exc)
+                except re.error:
                     continue
             elif mode == "contains":
                 pats.append(re.compile(re.escape(s), re.I))

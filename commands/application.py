@@ -13,9 +13,8 @@ STAFF_REVIEW_CHANNEL_ID = int(os.getenv("STAFF_REVIEW_CHANNEL_ID", "0"))
 TICKET_LOG_CHANNEL_ID = int(os.getenv("TICKET_LOG_CHANNEL_ID", "0"))
 TICKET_CATEGORY_ID = int(os.getenv("TICKET_CATEGORY_ID", "0"))
 HOME_GUILD_ID = int(os.getenv("HOME_GUILD_ID", "0"))
-DEFAULT_VERIFIED_ROLE_ID = 663038933789311016
 VERIFIED_ROLE_NAME = os.getenv("VERIFIED_ROLE_NAME", "Verified")
-VERIFIED_ROLE_ID = int(os.getenv("VERIFIED_ROLE_ID") or DEFAULT_VERIFIED_ROLE_ID)
+VERIFIED_ROLE_ID = int(os.getenv("VERIFIED_ROLE_ID") or 0)
 PENDING_ROLE_NAME = os.getenv("PENDING_ROLE_NAME", "Pending Application")
 PENDING_ROLE_ID = int(os.getenv("PENDING_ROLE_ID", "0") or 0)
 WELCOME_CHANNEL_ID = int(
@@ -24,7 +23,7 @@ WELCOME_CHANNEL_ID = int(
     or 0
 )
 MOTD_FILE = Path(os.getenv("MOTD_FILE") or (BASE_DIR / "motd.md"))
-APPLICATION_FOLLOWUP_CATEGORY_ID = int(os.getenv("APPLICATION_FOLLOWUP_CATEGORY_ID", "1327042700733845505"))
+APPLICATION_FOLLOWUP_CATEGORY_ID = int(os.getenv("APPLICATION_FOLLOWUP_CATEGORY_ID", "0"))
 FOLLOWUP_MESSAGE_TEXT = (
     "Hello, just following up here, more information is needed to complete your application! "
     "If you need assistance, please use @Staff"
@@ -160,6 +159,8 @@ def init_db():
             message_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL)""")
         c.execute("""CREATE TABLE IF NOT EXISTS app_sessions(
             message_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, data TEXT NOT NULL)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS captcha_verified(
+            user_id INTEGER PRIMARY KEY, verified_at TEXT NOT NULL)""")
         con.commit()
 
 def has_submitted(user_id:int)->bool:
@@ -170,6 +171,21 @@ def mark_as_submitted(user_id:int, submitted_at:str):
     with sqlite3.connect(DB_PATH) as con:
         con.execute("INSERT OR REPLACE INTO applications(user_id,submitted_at,status) VALUES(?,?,'pending')",
                     (int(user_id), submitted_at)); con.commit()
+
+def is_captcha_verified(user_id: int) -> bool:
+    with sqlite3.connect(DB_PATH) as con:
+        return con.execute(
+            "SELECT 1 FROM captcha_verified WHERE user_id=?", (int(user_id),)
+        ).fetchone() is not None
+
+def mark_captcha_verified(user_id: int):
+    with sqlite3.connect(DB_PATH) as con:
+        con.execute(
+            "INSERT OR REPLACE INTO captcha_verified(user_id, verified_at) "
+            "VALUES(?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+            (int(user_id),),
+        )
+        con.commit()
 
 def update_application_status(user_id:int, status:str):
     normalized = (status or 'pending').strip().lower()
@@ -189,6 +205,38 @@ def _normalize_role_name(value: str | None) -> str:
     if not value:
         return ""
     return _ROLE_NAME_SANITIZE.sub("", value.lower())
+
+_BRANCH_ROLE_ENV_MAP: dict[str, str] = {
+    "army": "ARMY_ROLE_ID",
+    "navy": "NAVY_ROLE_ID",
+    "marines": "MARINES_ROLE_ID",
+    "airforce": "AIR_FORCE_ROLE_ID",
+    "coastguard": "COAST_GUARD_ROLE_ID",
+    "spaceforce": "SPACE_FORCE_ROLE_ID",
+    "family": "FAMILY_ROLE_ID",
+}
+
+def _load_branch_role_ids() -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for normalized, env_var in _BRANCH_ROLE_ENV_MAP.items():
+        raw = os.getenv(env_var)
+        if not raw:
+            continue
+        try:
+            role_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if role_id > 0:
+            mapping[normalized] = role_id
+    return mapping
+
+BRANCH_ROLE_IDS = _load_branch_role_ids()
+
+def get_branch_role_id(branch: str) -> int | None:
+    normalized = _normalize_role_name(branch)
+    if not normalized:
+        return None
+    return BRANCH_ROLE_IDS.get(normalized)
 
 async def find_role(guild: discord.Guild, role_id: int | None = None, role_name: str | None = None) -> discord.Role | None:
     if guild is None:
@@ -311,8 +359,13 @@ async def process_application_decision(
     status_label = 'approved' if approved else 'denied'
     branch = (resolved_data.get("branch_choice") or resolved_data.get("branch") or "").strip()
     if approved and branch:
+        branch_role_id = get_branch_role_id(branch)
         branch_role_name = branch.title()
-        role = await find_role(guild_obj, role_name=branch_role_name)
+        role = None
+        if branch_role_id:
+            role = await find_role(guild_obj, role_id=branch_role_id)
+        if role is None:
+            role = await find_role(guild_obj, role_name=branch_role_name)
         if role:
             try:
                 await member_obj.add_roles(role)
@@ -629,6 +682,13 @@ class ApplicationView(discord.ui.View):
     async def apply(self, interaction: discord.Interaction, _: discord.ui.Button):
         if has_submitted(interaction.user.id):
             await interaction.response.send_message("You already submitted.", ephemeral=True)
+            return
+        if not is_captcha_verified(interaction.user.id):
+            await interaction.response.send_message(
+                "You must complete human verification before applying. "
+                "Check your DMs for the verification message, or ask staff for help.",
+                ephemeral=True,
+            )
             return
         try:
             dm = await interaction.user.create_dm()

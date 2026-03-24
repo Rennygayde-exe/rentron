@@ -1,10 +1,10 @@
 from __future__ import annotations
-import math
+from decimal import Decimal, ROUND_HALF_UP
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-def _fmt_currency(n: float) -> str:
+def _fmt_currency(n: Decimal) -> str:
     return f"${n:,.2f}"
 
 class VSP(commands.Cog):
@@ -34,14 +34,21 @@ class VSP(commands.Cog):
         tax_rate: app_commands.Range[float, 0.0, 1.0] = 0.22,
     ):
 
-        yos = yos_years + (yos_months / 12.0)
-        isp_baseline = 0.10 * (12.0 * monthly_pay) * yos
+        d_pay = Decimal(str(monthly_pay))
+        d_mult = Decimal(str(multiplier))
+        d_tax = Decimal(str(tax_rate))
+        d_months = Decimal(str(yos_months))
 
-        vsp_gross = multiplier * isp_baseline
-        vsp_net = vsp_gross * (1.0 - tax_rate)
+        yos = Decimal(str(yos_years)) + (d_months / Decimal("12"))
+        isp_baseline = Decimal("0.10") * (Decimal("12") * d_pay) * yos
+
+        vsp_gross = d_mult * isp_baseline
+        vsp_net = (vsp_gross * (Decimal("1") - d_tax)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        vsp_gross = vsp_gross.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        isp_baseline = isp_baseline.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         notes = []
         if multiplier > 1.0:
-            notes.append("Check your mutiplier memo.")
+            notes.append("Check your multiplier memo.")
         if multiplier == 4.0:
             notes.append("4.0× is the max allowed by policy.")
         if tax_rate == 0.22:
@@ -56,10 +63,10 @@ class VSP(commands.Cog):
         )
         embed.add_field(name="Inputs",
                         value=(
-                            f"Monthly Pay: {_fmt_currency(monthly_pay)}\n"
+                            f"Monthly Pay: {_fmt_currency(d_pay)}\n"
                             f"YOS: {yos_years}y {yos_months}m ({yos:.2f} yrs)\n"
-                            f"Multiplier: {multiplier:.2f}×\n"
-                            f"Withholding: {tax_rate:.2%}"
+                            f"Multiplier: {d_mult:.2f}×\n"
+                            f"Withholding: {d_tax:.2%}"
                         ),
                         inline=False)
         embed.add_field(name="Results",

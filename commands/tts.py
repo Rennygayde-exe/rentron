@@ -106,13 +106,21 @@ class TTS(commands.Cog):
                 await interaction.followup.send(f"TTS failed: {e2}", ephemeral=True)
                 return
 
-        if vc.is_playing():
-            vc.stop()
-        src = discord.FFmpegPCMAudio(path, options=ff_opts)
-        def _after(_):
-            try: os.remove(path)
-            except OSError: pass
-        vc.play(discord.PCMVolumeTransformer(src, volume=1.0), after=_after)
+        try:
+            if vc.is_playing():
+                vc.stop()
+            src = discord.FFmpegPCMAudio(path, options=ff_opts)
+            def _after(_):
+                try: os.remove(path)
+                except OSError: pass
+            vc.play(discord.PCMVolumeTransformer(src, volume=1.0), after=_after)
+        except Exception as play_err:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            await interaction.followup.send(f"Playback failed: {play_err}", ephemeral=True)
+            return
         await interaction.followup.send(f"Speaking with {style} style ({voice}).", ephemeral=True)
 
     @app_commands.command(name="tts_voices", description="List available voices (first 25)")

@@ -1,4 +1,9 @@
-import os, json, io, asyncio, math
+import os
+import json
+import io
+import asyncio
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import discord
@@ -77,7 +82,10 @@ class ModNotes(commands.Cog):
             await interaction.followup.send("No notes found."); return
         lines = []
         for n in chunk:
-            t = n["ts"].replace("T"," ").split(".")[0]
+            try:
+                t = datetime.fromisoformat(n["ts"]).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                t = str(n["ts"])
             tag = f" [{', '.join(n['tags'])}]" if n.get("tags") else ""
             lines.append(f"#{n['id']} • {t} • by <@{n['author_id']}>{tag}\n{n['note']}")
         await interaction.followup.send(f"Notes for {member} — page {page}/{pages}\n\n" + "\n\n".join(lines))

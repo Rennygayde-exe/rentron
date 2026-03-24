@@ -1,7 +1,10 @@
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json, os, datetime
+import json
+import os
+import datetime
 
 SNAPSHOT_DIR = "snapshots"
 
@@ -20,7 +23,7 @@ class AuditSnapshot(commands.Cog):
         snapshot = {
             "guild_name": guild.name,
             "guild_id": guild.id,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "roles": [],
             "channels": []
         }

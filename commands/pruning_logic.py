@@ -76,7 +76,7 @@ class Pruning(commands.Cog):
     def next_timestamp(self, last_ts: float, interval_sec: int) -> float:
         if last_ts > 0:
             return last_ts + interval_sec
-        return datetime.utcnow().timestamp() + interval_sec
+        return datetime.now(timezone.utc).timestamp() + interval_sec
 
     async def safe_delete(self, msg: discord.Message):
         try:
@@ -130,7 +130,7 @@ class Pruning(commands.Cog):
             await self.safe_delete(m)
 
         if deleted:
-            fn = f"prune_log_{int(datetime.utcnow().timestamp())}.csv"
+            fn = f"prune_log_{int(datetime.now(timezone.utc).timestamp())}.csv"
             with open(fn, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["id","author","created","url","channel"])
@@ -156,14 +156,14 @@ class Pruning(commands.Cog):
             if not interval_sec:
                 return
             last_ts = self.load_last()
-            now_ts = datetime.utcnow().timestamp()
+            now_ts = datetime.now(timezone.utc).timestamp()
             if now_ts - last_ts < interval_sec:
                 return
             channel = await self.resolve_text_channel(config.get("channel_id"))
             log_channel = await self.resolve_text_channel(config.get("log_channel_id"))
             if not channel:
                 return
-            cutoff = datetime.utcnow() - timedelta(seconds=interval_sec)
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=interval_sec)
             await self.prune_channel(channel, cutoff, log_channel)
             self.save_last(now_ts)
         except Exception as e:
@@ -176,7 +176,7 @@ class Pruning(commands.Cog):
     @app_commands.command(name="prune_attachments", description="Manually prune attachments")
     async def prune_attachments(self, interaction: discord.Interaction, days: int, channel: discord.TextChannel, images_only: bool = False):
         await interaction.response.defer(ephemeral=True)
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         log_channel = await self.resolve_text_channel(self.load_config().get("log_channel_id"))
         await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
         await interaction.followup.send(f"Manual prune executed for {channel.mention}", ephemeral=True)
@@ -192,11 +192,11 @@ class Pruning(commands.Cog):
         if not interval_sec:
             await interaction.followup.send("Invalid prune config. Please run /set_prune_config again.", ephemeral=True)
             return
-        now_ts = datetime.utcnow().timestamp()
+        now_ts = datetime.now(timezone.utc).timestamp()
         last_ts = self.load_last()
         if last_ts and now_ts - last_ts < interval_sec:
             next_ts = self.next_timestamp(last_ts, interval_sec)
-            next_dt = datetime.utcfromtimestamp(next_ts)
+            next_dt = datetime.fromtimestamp(next_ts, tz=timezone.utc)
             await interaction.followup.send(
                 f"Too early to prune. Next run scheduled for {discord.utils.format_dt(next_dt, style='F')} ({discord.utils.format_dt(next_dt, style='R')}).",
                 ephemeral=True,
@@ -208,11 +208,11 @@ class Pruning(commands.Cog):
             return
         log_channel = await self.resolve_text_channel(config.get("log_channel_id"))
         extra_channel = interaction.channel if isinstance(interaction.channel, discord.TextChannel) else None
-        cutoff = datetime.utcnow() - timedelta(seconds=interval_sec)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=interval_sec)
         deleted = await self.prune_channel(channel, cutoff, log_channel, extra_channel)
         self.save_last(now_ts)
         next_ts = self.next_timestamp(now_ts, interval_sec)
-        next_dt = datetime.utcfromtimestamp(next_ts)
+        next_dt = datetime.fromtimestamp(next_ts, tz=timezone.utc)
         await interaction.followup.send(
             f"Prune complete in {channel.mention}. Deleted {deleted} message(s). Next run {discord.utils.format_dt(next_dt, style='R')}.",
             ephemeral=True,
@@ -232,9 +232,9 @@ class Pruning(commands.Cog):
         self.save_config(config)
         self.save_last(0)
         interval_sec = self.interval_seconds(config)
-        cutoff = datetime.utcnow() - timedelta(seconds=interval_sec or 0)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=interval_sec or 0)
         await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
-        self.save_last(datetime.utcnow().timestamp())
+        self.save_last(datetime.now(timezone.utc).timestamp())
         await interaction.followup.send(f"Auto prune every {interval} {unit} in {channel.mention}, logs in {log_channel.mention}", ephemeral=True)
 
     @app_commands.command(name="forcerun", description="Force an immediate auto-prune run with current config")
@@ -253,9 +253,9 @@ class Pruning(commands.Cog):
         if not interval_sec:
             await interaction.followup.send("Invalid prune config. Please run /set_prune_config.", ephemeral=True)
             return
-        cutoff = datetime.utcnow() - timedelta(seconds=interval_sec)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=interval_sec)
         await self.prune_channel(channel, cutoff, log_channel, interaction.channel)
-        self.save_last(datetime.utcnow().timestamp())
+        self.save_last(datetime.now(timezone.utc).timestamp())
         await interaction.followup.send(f"Forced prune executed for {channel.mention}", ephemeral=True)
 
     @app_commands.command(name="next_prune", description="Show next scheduled prune time")
@@ -270,7 +270,7 @@ class Pruning(commands.Cog):
             await interaction.response.send_message("Stored config invalid. Please re-run /set_prune_config.", ephemeral=True)
             return
         next_ts = self.next_timestamp(last_ts, interval_sec)
-        next_time = datetime.utcfromtimestamp(next_ts)
+        next_time = datetime.fromtimestamp(next_ts, tz=timezone.utc)
         await interaction.response.send_message(
             f"Next prune scheduled for {discord.utils.format_dt(next_time, style='F')} ({discord.utils.format_dt(next_time, style='R')})",
             ephemeral=True,

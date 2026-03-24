@@ -16,12 +16,6 @@
       "response": "My only regret with the American south is that Tecumseh Sherman didn't keep burning and the lawful federal government of the United States of America didn't grind their shitty backwards culture into the dirt to start fresh like we did with the Germans and Japanese. Maybe then the south wouldn't still be poor and full of hate. The cruelest thing the union did was give the south mercy in 1865"
     },
     {
-      "id": "fuck_you_mention",
-      "triggers": ["fuck you"],
-      "response": "Fuck you too buddy, {mention}",
-      "mention_required": true
-    },
-    {
       "id": "sniper",
       "triggers": ["Lyudmila Pavlichenko", "how many men have you killed?", "!Lyudmila_Pavlichenko"],
       "response": "Not men, Fascists... 309"
