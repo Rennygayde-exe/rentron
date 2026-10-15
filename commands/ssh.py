@@ -1,20 +1,68 @@
 import io
+import logging
+import os
+import time
 import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord.ext import tasks
+from utils import command_log
 
-ALLOWED_USER_ID = 669626735385640993
+logger = logging.getLogger(__name__)
+
+_raw_allowed_user_id = os.getenv("SHELL_ALLOWED_USER_ID")
+ALLOWED_USER_ID = int(_raw_allowed_user_id) if _raw_allowed_user_id else None
+SESSION_TIMEOUT_SECONDS = int(os.getenv("SHELL_SESSION_TIMEOUT", "300"))
+LOG_CHANNEL_ID = int(os.getenv("BLACKBIRDLOGS_ID", "0"))
+
 
 class ShellSession(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.sessions = {}
+        self.sessions: dict[int, dict] = {}
+        self._timeout_task.start()
+
+    def cog_unload(self):
+        self._timeout_task.cancel()
+
+    @tasks.loop(seconds=60)
+    async def _timeout_task(self):
+        now = time.monotonic()
+        stale = [
+            uid for uid, s in self.sessions.items()
+            if now - s["last_active"] > SESSION_TIMEOUT_SECONDS
+        ]
+        for uid in stale:
+            session = self.sessions.pop(uid, None)
+            if not session:
+                continue
+            proc = session["proc"]
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            dm = session.get("dm")
+            if dm:
+                try:
+                    await dm.send(
+                        f"Your shell session was closed after {SESSION_TIMEOUT_SECONDS // 60} min of inactivity."
+                    )
+                except Exception:
+                    pass
+
+    @_timeout_task.before_loop
+    async def _before_timeout_task(self):
+        await self.bot.wait_until_ready()
 
     @app_commands.command(name="shellstart", description="Start a local shell session")
     async def shellstart(self, interaction: discord.Interaction):
-        if interaction.user.id != ALLOWED_USER_ID:
+        if ALLOWED_USER_ID is None or interaction.user.id != ALLOWED_USER_ID:
             await interaction.response.send_message("Permission denied", ephemeral=True)
+            return
+        if interaction.user.id in self.sessions:
+            await interaction.response.send_message("You already have an active session.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         proc = await asyncio.create_subprocess_exec(
@@ -23,16 +71,24 @@ class ShellSession(commands.Cog):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT
         )
-        self.sessions[interaction.user.id] = proc
         dm = await interaction.user.create_dm()
-        await dm.send("Shell session started. Send commands here. Use /shellclose to end.")
+        self.sessions[interaction.user.id] = {
+            "proc": proc,
+            "last_active": time.monotonic(),
+            "dm": dm,
+        }
+        await dm.send(
+            f"Shell session started. Send commands here. Use /shellclose to end.\n"
+            f"Sessions auto-close after {SESSION_TIMEOUT_SECONDS // 60} min of inactivity."
+        )
         await interaction.followup.send("Session started; check your DMs", ephemeral=True)
 
     @app_commands.command(name="shellclose", description="Close your shell session")
     async def shellclose(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        proc = self.sessions.pop(interaction.user.id, None)
-        if proc:
+        session = self.sessions.pop(interaction.user.id, None)
+        if session:
+            proc = session["proc"]
             proc.kill()
             await proc.wait()
             await interaction.followup.send("Session closed", ephemeral=True)
@@ -43,10 +99,21 @@ class ShellSession(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot or not isinstance(message.channel, discord.DMChannel):
             return
-        proc = self.sessions.get(message.author.id)
-        if not proc:
+        session = self.sessions.get(message.author.id)
+        if not session:
             return
+        session["last_active"] = time.monotonic()
+        proc = session["proc"]
         cmd = message.content.strip()
+        command_log.log_command(cmd, message.author.id, 0)
+        log_ch = self.bot.get_channel(LOG_CHANNEL_ID) if LOG_CHANNEL_ID else None
+        if log_ch:
+            try:
+                await log_ch.send(
+                    f"🐚 Shell command by {message.author} (`{message.author.id}`): `{cmd[:1500]}`"
+                )
+            except Exception:
+                pass
         proc.stdin.write((cmd + "\n").encode())
         await proc.stdin.drain()
         await asyncio.sleep(0.1)
@@ -66,5 +133,11 @@ class ShellSession(commands.Cog):
             buf.name = "output.txt"
             await message.channel.send(file=discord.File(buf))
 
+
 async def setup(bot: commands.Bot):
+    if ALLOWED_USER_ID is None:
+        logger.error(
+            "SHELL_ALLOWED_USER_ID is not set; refusing to load the owner shell (commands.ssh)."
+        )
+        return
     await bot.add_cog(ShellSession(bot))

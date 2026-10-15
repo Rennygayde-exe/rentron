@@ -1,4 +1,8 @@
 .env
+# ...and every timestamped .env backup (.env.bak.*, .env.premerge.*, etc).
+# These hold live secrets; the bare `.env` rule above does not cover them.
+# Does not match .env_sample (underscore, not dot), which stays tracked.
+.env.*
 __pycache__/cli_chatbox.cpython-313.pyc
 __pycache__/signal_handler.cpython-313.pyc
 commands/__pycache__/__init__.cpython-313.pyc
@@ -47,3 +51,6 @@ utils/__pycache__/risk_roster.cpython-313.pyc
 commands/__pycache__/role_menu.cpython-313.pyc
 commands/__pycache__/xp.cpython-313.pyc
 xp.db
+application_errors.log
+motd.md
+data/react_roles.json

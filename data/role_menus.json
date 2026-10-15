@@ -30,5 +30,86 @@
         "label": "Air Force Help"
       }
     ]
+  },
+  "1473790100314918912": {
+    "guild_id": 663035397416419351,
+    "channel_id": 1262888026263257119,
+    "entries": [
+      {
+        "emoji": null,
+        "role_id": 935559590781792346,
+        "label": "MHW"
+      },
+      {
+        "emoji": null,
+        "role_id": 910308566672486420,
+        "label": "News"
+      },
+      {
+        "emoji": null,
+        "role_id": 910308472153845761,
+        "label": "Politics"
+      },
+      {
+        "emoji": null,
+        "role_id": 1473129694898426079,
+        "label": "Career Nav"
+      },
+      {
+        "emoji": null,
+        "role_id": 1322009168730783754,
+        "label": "Movie Ping"
+      },
+      {
+        "emoji": null,
+        "role_id": 1322008282969407578,
+        "label": "Gaming Ping"
+      },
+      {
+        "emoji": null,
+        "role_id": 1261402810612842586,
+        "label": "Solutions"
+      },
+      {
+        "emoji": null,
+        "role_id": 1261402253886230559,
+        "label": "Support"
+      },
+      {
+        "emoji": null,
+        "role_id": 1231044702581690410,
+        "label": "Volunteer"
+      },
+      {
+        "emoji": null,
+        "role_id": 1198453210659168299,
+        "label": "Announcement Ping"
+      },
+      {
+        "emoji": null,
+        "role_id": 1195390154655932417,
+        "label": "GWA"
+      },
+      {
+        "emoji": null,
+        "role_id": 1111497314310303774,
+        "label": "Minecraft Updates"
+      },
+      {
+        "emoji": null,
+        "role_id": 1108855031593189386,
+        "label": "Coven Corner"
+      },
+      {
+        "emoji": null,
+        "role_id": 1058899129671110787,
+        "label": "VC Ping"
+      },
+      {
+        "emoji": null,
+        "role_id": 1052382095613362206,
+        "label": "Furry Club"
+      }
+    ]
   }
 }

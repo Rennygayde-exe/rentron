@@ -7,14 +7,23 @@ import csv
 import re
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+
+REGEX_MATCH_TIMEOUT = 2.0
+MAX_REGEX_PATTERNS = 25
+
+
+def _match_patterns(content: str, patterns: list[re.Pattern]) -> list[re.Pattern]:
+    return [p for p in patterns if p.search(content)]
+
 
 class RegexScan(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(name="regexscan", description="Scan server messages for matches from a regex JSON file")
+    @app_commands.checks.has_permissions(administrator=True)
     async def regexscan(self, interaction: discord.Interaction, regex_file: discord.Attachment):
         await interaction.response.defer(ephemeral=False, thinking=True)
 
@@ -37,6 +46,12 @@ class RegexScan(commands.Cog):
                 await interaction.followup.send("Regex file must be a JSON array or object with regex strings.")
                 return
 
+            if len(patterns) > MAX_REGEX_PATTERNS:
+                await interaction.followup.send(
+                    f"Too many patterns ({len(patterns)}); max is {MAX_REGEX_PATTERNS}."
+                )
+                return
+
             compiled = [re.compile(p) for p in patterns]
         except Exception as e:
             await interaction.followup.send(f"Failed to load regex file: {e}")
@@ -53,19 +68,25 @@ class RegexScan(commands.Cog):
         for i, channel in enumerate(channels, 1):
             try:
                 async for msg in channel.history(limit=None):
-                    for pat in compiled:
-                        if pat.search(msg.content or ""):
-                            snippet = msg.content.replace("\n", " ")[:200]
-                            link = f"https://discord.com/channels/{interaction.guild.id}/{channel.id}/{msg.id}"
-                            matches.append([
-                                msg.id,
-                                channel.id,
-                                msg.author.id,
-                                msg.created_at.isoformat(),
-                                snippet,
-                                pat.pattern,
-                                link
-                            ])
+                    try:
+                        hit_patterns = await asyncio.wait_for(
+                            asyncio.to_thread(_match_patterns, msg.content or "", compiled),
+                            timeout=REGEX_MATCH_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    for pat in hit_patterns:
+                        snippet = msg.content.replace("\n", " ")[:200]
+                        link = f"https://discord.com/channels/{interaction.guild.id}/{channel.id}/{msg.id}"
+                        matches.append([
+                            msg.id,
+                            channel.id,
+                            msg.author.id,
+                            msg.created_at.isoformat(),
+                            snippet,
+                            pat.pattern,
+                            link
+                        ])
             except discord.Forbidden:
                 continue
             except discord.HTTPException:
@@ -103,17 +124,123 @@ BEGIN_AGAIN_VIDEO_PATH = os.getenv("PURGE_VIDEO_PATH", "vhs_dead_money_sc_5mb.mp
 class PurgeChannel(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._delete_batch = 50
+        self._sleep_between_batches = 1.1
+        self._sleep_between_single = 0.35
+
+    def _build_purge_log_row(
+        self,
+        msg: discord.Message,
+        channel: discord.TextChannel
+    ) -> list[str]:
+        attachments = " ".join(a.url for a in msg.attachments) if msg.attachments else ""
+        return [
+            str(msg.id),
+            str(channel.id),
+            channel.name,
+            str(msg.author.id),
+            str(msg.author),
+            msg.author.display_name,
+            msg.created_at.isoformat(),
+            msg.content or "",
+            attachments
+        ]
+
+    def _build_purge_log_file(
+        self,
+        rows: list[list[str]],
+        channel_id: int
+    ) -> discord.File:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "message_id",
+            "channel_id",
+            "channel_name",
+            "author_id",
+            "author_tag",
+            "author_display_name",
+            "created_at",
+            "content",
+            "attachments"
+        ])
+        writer.writerows(rows)
+        output.seek(0)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"purge_log_{channel_id}_{ts}.csv"
+        return discord.File(io.BytesIO(output.getvalue().encode()), filename=filename)
+
+    async def _safe_delete_message(self, msg: discord.Message, reason: str) -> None:
+        try:
+            await msg.delete(reason=reason)
+        except TypeError:
+            await msg.delete()
+
+    async def _safe_delete_messages(
+        self,
+        target: discord.TextChannel,
+        messages: list[discord.Message],
+        reason: str
+    ) -> None:
+        try:
+            await target.delete_messages(messages, reason=reason)
+        except TypeError:
+            await target.delete_messages(messages)
+
+    async def _purge_non_pinned_throttled(
+        self,
+        target: discord.TextChannel,
+        pinned_ids: set[int],
+        reason: str,
+        include_recent: bool
+    ) -> tuple[int, list[list[str]], int]:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=1)
+        to_bulk = []
+        deleted_count = 0
+        skipped_recent = 0
+        log_rows = []
+
+        async for msg in target.history(limit=None):
+            if msg.id in pinned_ids:
+                continue
+
+            if not include_recent and msg.created_at > cutoff:
+                skipped_recent += 1
+                continue
+
+            if (now - msg.created_at).days < 14:
+                to_bulk.append(msg)
+                log_rows.append(self._build_purge_log_row(msg, target))
+                if len(to_bulk) >= self._delete_batch:
+                    await self._safe_delete_messages(target, to_bulk, reason)
+                    deleted_count += len(to_bulk)
+                    to_bulk.clear()
+                    await asyncio.sleep(self._sleep_between_batches)
+            else:
+                log_rows.append(self._build_purge_log_row(msg, target))
+                await self._safe_delete_message(msg, reason)
+                deleted_count += 1
+                await asyncio.sleep(self._sleep_between_single)
+
+        if to_bulk:
+            await self._safe_delete_messages(target, to_bulk, reason)
+            deleted_count += len(to_bulk)
+
+        return deleted_count, log_rows, skipped_recent
 
     @app_commands.command(
         name="purgechannel",
-        description="Delete ALL messages in a channel by cloning---> deleting (preserves pins)"
+        description="Delete all messages by cloning, or delete only non-pinned messages"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def purgechannel(
         self,
         interaction: discord.Interaction,
         confirm: bool,
-        channel: discord.TextChannel = None
+        channel: discord.TextChannel = None,
+        non_pinned_only: bool = False,
+        include_recent: bool = False
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -128,6 +255,64 @@ class PurgeChannel(commands.Cog):
 
         try:
             pinned = await target.pins()
+
+            if non_pinned_only:
+                pinned_ids = {m.id for m in pinned}
+                await interaction.followup.send(
+                    f"Deleting non-pinned messages in `{target.name}` now…",
+                    ephemeral=True
+                )
+                reason = f"Purged non-pinned by {interaction.user}"
+                deleted_count, log_rows, skipped_recent = await self._purge_non_pinned_throttled(
+                    target,
+                    pinned_ids,
+                    reason,
+                    include_recent
+                )
+                if skipped_recent:
+                    await interaction.followup.send(
+                        (
+                            f"Skipped {skipped_recent} message(s) from the last 24 hours. "
+                            "Use `include_recent:true` to delete them."
+                        ),
+                        ephemeral=True
+                    )
+                await interaction.followup.send(
+                    f"Deleted {deleted_count} non-pinned message(s) in `{target.name}`.",
+                    ephemeral=True
+                )
+                if log_rows:
+                    log_file = self._build_purge_log_file(log_rows, target.id)
+                    log_channel = interaction.channel or target
+                    try:
+                        await log_channel.send(
+                            content=(
+                                f"Purge log for `{target.name}` "
+                                f"(non-pinned only) by {interaction.user.mention}."
+                            ),
+                            file=log_file
+                        )
+                    except discord.Forbidden:
+                        await interaction.followup.send(
+                            "I don't have permission to post the purge log in this channel.",
+                            ephemeral=True
+                        )
+                    except discord.HTTPException:
+                        await interaction.followup.send(
+                            "Failed to upload the purge log (file too large or upload error).",
+                            ephemeral=True
+                        )
+                return
+
+            if not include_recent:
+                await interaction.followup.send(
+                    (
+                        "This purge would delete messages from the last 24 hours. "
+                        "Re-run with `include_recent:true` to allow that."
+                    ),
+                    ephemeral=True
+                )
+                return
 
             await interaction.followup.send(
                 f"Purging `{target.name}` now…",
@@ -192,6 +377,7 @@ class PurgeChannel(commands.Cog):
 
 USERLOGCHANNEL = int(os.getenv("USEREXITLOGS", "0"))
 
+
 class MemberTracker(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -235,6 +421,48 @@ class MemberTracker(commands.Cog):
             await channel.send(embed=embed)
         else:
             print(f"[WARN] USEREXITLOGS channel not found (ID: {USERLOGCHANNEL})")
+
+    @app_commands.command(
+        name="cleanup_exit_buttons",
+        description="One-time cleanup: strip the old Message User buttons off past exit-log messages",
+    )
+    @app_commands.describe(limit="How many recent exit-log messages to check (default 20)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def cleanup_exit_buttons(self, interaction: discord.Interaction, limit: int = 20):
+        await interaction.response.defer(ephemeral=True)
+        channel = self.bot.get_channel(USERLOGCHANNEL)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(USERLOGCHANNEL)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                await interaction.followup.send("Exit log channel not found.", ephemeral=True)
+                return
+
+        checked = 0
+        updated = 0
+        async for msg in channel.history(limit=None):
+            if checked >= limit:
+                break
+            if not msg.author.bot or not msg.embeds:
+                continue
+            embed = msg.embeds[0]
+            if embed.footer.text != "Member removal logged":
+                continue
+            checked += 1
+            if not msg.components:
+                continue
+            try:
+                await msg.edit(view=None)
+                updated += 1
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+            await asyncio.sleep(0.5)
+
+        await interaction.followup.send(
+            f"Checked {checked} exit-log message(s), removed the button from {updated}.",
+            ephemeral=True,
+        )
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(RegexScan(bot))
     await bot.add_cog(PurgeChannel(bot))

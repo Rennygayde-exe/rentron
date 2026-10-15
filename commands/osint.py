@@ -2,7 +2,10 @@ from discord import app_commands
 import discord
 import os
 import asyncio
+import shlex
 from dotenv import load_dotenv
+
+BLACKBIRD_TIMEOUT = int(os.getenv("BLACKBIRD_TIMEOUT", "90"))
 
 @app_commands.command(name="blackbird", description="Run Blackbird OSINT tool with raw arguments")
 @app_commands.describe(arguments="Arguments to pass to Blackbird (e.g. -u target --json)")
@@ -15,14 +18,27 @@ async def blackbird(interaction: discord.Interaction, arguments: str):
     await interaction.response.send_message(f"Running Blackbird with args: `{arguments}`...", ephemeral=True)
 
     try:
+        try:
+            args = shlex.split(arguments)
+        except ValueError:
+            await interaction.followup.send("Invalid arguments (unmatched quotes).", ephemeral=True)
+            return
+
         process = await asyncio.create_subprocess_exec(
-            "python", "blackbird.py", *arguments.split(),
+            "python", "blackbird.py", *args,
             cwd=os.getenv("BLACKBIRD_PATH"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
 
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=BLACKBIRD_TIMEOUT)
+        except asyncio.TimeoutError:
+            process.kill()
+            await interaction.followup.send(
+                f"Blackbird scan timed out after {BLACKBIRD_TIMEOUT}s.", ephemeral=True
+            )
+            return
         raw_output = stdout.decode()
         error_output = stderr.decode()
 
@@ -46,7 +62,5 @@ async def blackbird(interaction: discord.Interaction, arguments: str):
         for chunk in chunks:
             await interaction.followup.send(f"```{chunk}```", ephemeral=True)
 
-    except asyncio.TimeoutError:
-        await interaction.followup.send("Blackbird scan timed out.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: `{str(e)}`", ephemeral=True)

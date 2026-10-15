@@ -1,4 +1,6 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-source venv/bin/activate
-python bot.py "$@"
+
+source source/bin/activate
+
+exec python bot.py "$@" >> rentron.log 2>&1

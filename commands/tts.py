@@ -27,15 +27,23 @@ class TTS(commands.Cog):
         self._voices = None
 
     async def _ensure_voice(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None):
-        vc = interaction.guild.voice_client
-        if vc and vc.channel and (not channel or vc.channel.id == getattr(channel, "id", None)):
-            return vc
         if not channel:
             m = interaction.user
             if not isinstance(m, discord.Member) or not m.voice or not isinstance(m.voice.channel, discord.VoiceChannel):
                 raise RuntimeError("Join a voice channel or specify one.")
             channel = m.voice.channel
-        return await channel.connect()
+
+        vc = interaction.guild.voice_client
+        if vc:
+            if not vc.is_connected():
+                await vc.disconnect(force=True)
+            elif vc.channel.id == getattr(channel, "id", None):
+                return vc
+            else:
+                await vc.move_to(channel)
+                return vc
+
+        return await channel.connect(reconnect=True)
 
     async def _list_voices(self):
         if self._voices is None:
@@ -106,13 +114,21 @@ class TTS(commands.Cog):
                 await interaction.followup.send(f"TTS failed: {e2}", ephemeral=True)
                 return
 
-        if vc.is_playing():
-            vc.stop()
-        src = discord.FFmpegPCMAudio(path, options=ff_opts)
-        def _after(_):
-            try: os.remove(path)
-            except OSError: pass
-        vc.play(discord.PCMVolumeTransformer(src, volume=1.0), after=_after)
+        try:
+            if vc.is_playing():
+                vc.stop()
+            src = discord.FFmpegPCMAudio(path, options=ff_opts)
+            def _after(_):
+                try: os.remove(path)
+                except OSError: pass
+            vc.play(discord.PCMVolumeTransformer(src, volume=1.0), after=_after)
+        except Exception as play_err:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            await interaction.followup.send(f"Playback failed: {play_err}", ephemeral=True)
+            return
         await interaction.followup.send(f"Speaking with {style} style ({voice}).", ephemeral=True)
 
     @app_commands.command(name="tts_voices", description="List available voices (first 25)")
@@ -127,14 +143,6 @@ class TTS(commands.Cog):
         lines = [f'{v["ShortName"]} ({v["Locale"]}, {v["Gender"]})' for v in voices]
         await interaction.followup.send("\n".join(lines) if lines else "No matches.", ephemeral=True)
 
-    @app_commands.command(name="tts_stop", description="Stop current TTS")
-    async def tts_stop(self, interaction: discord.Interaction):
-        vc = interaction.guild.voice_client
-        if vc and vc.is_playing():
-            vc.stop()
-            await interaction.response.send_message("Stopped.", ephemeral=True)
-        else:
-            await interaction.response.send_message("Nothing to stop.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TTS(bot))

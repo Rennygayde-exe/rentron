@@ -32,12 +32,14 @@ import subprocess
 import asyncio, re, fnmatch
 from typing import Literal
 from pathlib import Path
-load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BASE_DIR / ".env")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
 
 _FRAMES = 30
-_FRAME_DURATION = 60  # ms per frame
+_FRAME_DURATION = 60
 
 OUT_OF_OFFICE_FILE = Path("data/out_of_office.json")
 OUT_OF_OFFICE: dict[str, dict[str, str]] = {}
@@ -109,36 +111,57 @@ def _user_is_admin(interaction: Interaction) -> bool:
     return bool(perms)
 
 
-def create_github_issue(title, body, labels=[]):
-    import requests
-    import os
-
-    repo = os.getenv("GITHUB_REPO")
-    token = os.getenv("GITHUB_TOKEN")
-
+async def _create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, dict]:
+    token = os.getenv("GITHUB_GUEST_TOKEN") or GITHUB_TOKEN
     headers = {
         "Authorization": f"token {token}",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
     }
+    data = {"title": title, "body": body, "labels": labels}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+            json=data,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            return resp.status, await resp.json()
 
-    data = {
-        "title": title,
-        "body": body,
-        "labels": labels
-    }
 
-    response = requests.post(
-        f"https://api.github.com/repos/{repo}/issues",
-        json=data,
-        headers=headers
+class IssueModal(Modal, title="Submit GitHub Issue"):
+    title_input = TextInput(label="Title", max_length=80)
+    description_input = TextInput(
+        label="Description", style=discord.TextStyle.paragraph, required=False
     )
 
-    return response.status_code, response.json()
+    def __init__(self, labels: list[str]):
+        super().__init__()
+        self.labels = labels
+
+    async def on_submit(self, interaction: Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        body = self.description_input.value.strip() or "No description provided."
+        try:
+            status, data = await _create_github_issue(
+                self.title_input.value.strip(), body, self.labels
+            )
+        except aiohttp.ClientError as exc:
+            await interaction.followup.send(f"Network error: {exc}", ephemeral=True)
+            return
+        if status == 201:
+            await interaction.followup.send(
+                f"Issue created: {data['html_url']}", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"GitHub returned {status}: `{data.get('message', 'unknown error')}`",
+                ephemeral=True,
+            )
+
+
 class LabelSelectView(View):
     def __init__(self):
         super().__init__(timeout=300)
-        self.selected_labels = []
-
         self.label_select = Select(
             placeholder="Select labels for the issue",
             min_values=1,
@@ -147,38 +170,23 @@ class LabelSelectView(View):
                 discord.SelectOption(label="bug", description="Something isn't working"),
                 discord.SelectOption(label="feature", description="Suggest a new idea"),
                 discord.SelectOption(label="enhancement", description="Improve existing feature"),
-                discord.SelectOption(label="documentation", description="Docs or info issues")
-            ]
+                discord.SelectOption(label="documentation", description="Docs or info issues"),
+            ],
         )
         self.label_select.callback = self.select_callback
         self.add_item(self.label_select)
 
-    async def select_callback(self, interaction: Interaction):
-        self.selected_labels = self.label_select.values
+    async def select_callback(self, interaction: Interaction) -> None:
+        await interaction.response.send_modal(IssueModal(self.label_select.values))
 
-        class IssueModal(Modal, title="Submit GitHub Issue"):
-            title_input = TextInput(label="Title", max_length=80)
-            description_input = TextInput(label="Description", style=discord.TextStyle.paragraph, required=False)
-
-            async def on_submit(modal_self, modal_interaction: Interaction):
-                status, data = create_github_issue(
-                    modal_self.title_input.value,
-                    modal_self.description_input.value or "No description provided.",
-                    self.selected_labels
-                )
-                if status == 201:
-                    await modal_interaction.response.send_message(
-                        f"Issue created: {data['html_url']}", ephemeral=True
-                    )
-                else:
-                    await modal_interaction.response.send_message(
-                        f"Failed to create issue: `{data.get('message')}`", ephemeral=True
-                    )
-
-        await interaction.response.send_modal(IssueModal())
 
 @app_commands.command(name="gitissue", description="Submit a GitHub issue with labels.")
-async def gitissue(interaction: Interaction):
+async def gitissue(interaction: Interaction) -> None:
+    if not GITHUB_REPO or not (os.getenv("GITHUB_GUEST_TOKEN") or GITHUB_TOKEN):
+        await interaction.response.send_message(
+            "GitHub integration is not configured.", ephemeral=True
+        )
+        return
     await interaction.response.send_message(
         "Select labels for your GitHub issue:", view=LabelSelectView(), ephemeral=True
     )
@@ -222,85 +230,6 @@ async def out_of_office(interaction: Interaction, status: bool, message: str = "
             ephemeral=True,
         )
 
-@commands.is_owner()
-@commands.command(name="reloadresponses")
-async def reload_responses(ctx):
-    load_responses()
-    compile_triggers()
-    await ctx.send("Response triggers reloaded.")
-
-@commands.is_owner()
-@commands.command(name="listresponses")
-async def list_responses(ctx):
-    try:
-        if not RESPONSES:
-            await ctx.send("No responses are currently loaded.")
-            return
-
-        chunks = []
-        chunk = ""
-        for entry in RESPONSES:
-            line = f"**ID**: `{entry.get('id', 'n/a')}`\n"
-            line += f"**Triggers**: `{', '.join(entry.get('triggers', []))}`\n"
-            line += f"**Response**: {entry.get('response')}\n"
-            line += f"**Mention Required**: `{entry.get('mention_required', False)}`\n\n"
-            if len(chunk + line) > 1900:
-                chunks.append(chunk)
-                chunk = ""
-            chunk += line
-        chunks.append(chunk)
-
-        for part in chunks:
-            await ctx.send(part)
-    except Exception as e:
-        await ctx.send(f"Failed to list responses: {e}")
-
-@app_commands.command(
-    name="fortune",
-    description="Get a random fortune from the server"
-)
-async def fortune_cmd(interaction: Interaction):
-
-    await interaction.response.defer(thinking=True)
-    try:
-        proc = subprocess.run(
-            ["fortune"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=5,
-        )
-        output = proc.stdout.strip() or proc.stderr.strip() or "No fortune found."
-    except Exception as e:
-        output = f"Error running fortune: {e}"
-
-    await interaction.followup.send(f"```\n{output}\n```")
-import subprocess, shutil
-from discord import app_commands, Interaction
-
-@app_commands.command(name="moo", description="Have the cow say your text")
-@app_commands.describe(text="Text to have the cow say")
-async def cowsay_cmd(interaction: Interaction, text: str):
-    await interaction.response.defer()
-
-    cowsay_path = shutil.which("cowsay") or "/usr/games/cowsay"
-
-    try:
-        proc = subprocess.run(
-            [cowsay_path, text],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        output = proc.stdout.strip()
-        if not output:
-            output = "No output from cowsay."
-    except FileNotFoundError:
-        output = "`cowsay` not found on this system."
-    except subprocess.CalledProcessError as e:
-        output = f"Error running cowsay:\n{e.stderr or e.stdout}"
-
-    await interaction.followup.send(f"```{output}```")
 
 @app_commands.command(
     name="trace_act",
@@ -431,78 +360,6 @@ async def trace_act(interaction: Interaction, days: int, log_channel: TextChanne
         )
 
 
-@app_commands.command(
-    name="rennygadetarget",
-    description="Roko's Basilisk"
-)
-@app_commands.describe(
-    user="Who we dusting??"
-)
-async def rennygadetarget(
-    interaction: Interaction,
-    user: Member
-):
-    await interaction.response.defer()
-
-    avatar_url = user.display_avatar.with_format("png").with_size(256).url
-    async with aiohttp.ClientSession() as sess:
-        async with sess.get(str(avatar_url)) as resp:
-            data = await resp.read()
-
-    img = Image.open(BytesIO(data)).convert("RGBA")
-    w, h = img.size
-    pixels = img.load()
-
-    tile_size = 32
-    w_tiles = (w + tile_size - 1) // tile_size
-    h_tiles = (h + tile_size - 1) // tile_size
-
-    tiles = []
-    for ty in range(h_tiles):
-        for tx in range(w_tiles):
-            x0, y0 = tx * tile_size, ty * tile_size
-            box = (x0, y0, min(x0 + tile_size, w), min(y0 + tile_size, h))
-            tile_img = img.crop(box)
-            start_frame = random.randint(0, _FRAMES - 1)
-            tiles.append({
-                "img": tile_img,
-                "orig_pos": (x0, y0),
-                "start": start_frame,
-            })
-
-    frames = []
-    gravity = tile_size / _FRAMES  # pixels per frame after start
-
-    for frame_i in range(_FRAMES):
-        canvas = Image.new("RGBA", (w, h))
-        for t in tiles:
-            ox, oy = t["orig_pos"]
-            if frame_i < t["start"]:
-                canvas.paste(t["img"], (ox, oy), t["img"])
-            else:
-                dy = int((frame_i - t["start"]) * gravity)
-                new_y = oy + dy
-                if new_y < h:
-                    canvas.paste(t["img"], (ox, new_y), t["img"])
-        frames.append(canvas)
-
-    buffer = BytesIO()
-    frames[0].save(
-        buffer,
-        format="GIF",
-        save_all=True,
-        append_images=frames[1:],
-        duration=_FRAME_DURATION,
-        loop=0,
-        disposal=2,
-        transparency=0
-    )
-    buffer.seek(0)
-
-    await interaction.followup.send(
-        content=f"{user.mention}, you’ve been dusted!",
-        file=File(fp=buffer, filename="disintegrate.gif")
-    )
 
 
 @app_commands.command(name="attach_search", description="Search attachment file names in a channel and export matches.")
@@ -1496,64 +1353,16 @@ async def highriskroster_note(interaction: Interaction):
     view.message = await interaction.original_response()
 
 
-IMAGE_DIR = Path("stuart_content/images")
-QUOTE_FILE = Path("stuart_content/quotes.json")
-
-def load_stuart_quotes() -> list[str]:
-    """Safely load Stuart Little quotes from the JSON file."""
-    if not QUOTE_FILE.exists():
-        return []
-    try:
-        with QUOTE_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            quotes = data.get("quotes", [])
-            if isinstance(quotes, list):
-                return quotes
-    except Exception as e:
-        print(f"[stuartlittle] Error loading quotes: {e}")
-    return []
 
 
-@app_commands.command(
-    name="stuartlittle",
-    description="Reflect on the actions and legacy of Stuart Little."
-)
-async def stuartlittle(interaction: discord.Interaction):
-    """Send a random Stuart Little slander quote or image."""
-    await interaction.response.defer()
 
-    # 50/50: send an image or text
-    if random.choice([True, False]):
-        if not IMAGE_DIR.exists():
-            await interaction.followup.send("No images directory found.")
-            return
 
-        images = [p for p in IMAGE_DIR.glob("*") if p.is_file()]
-        if not images:
-            await interaction.followup.send("No images available.")
-            return
-
-        chosen = random.choice(images)
-        await interaction.followup.send(file=discord.File(chosen))
-
-    else:
-        quotes = load_stuart_quotes()
-        if not quotes:
-            await interaction.followup.send("No Stuart Little reports found.")
-            return
-
-        chosen = random.choice(quotes)
-        await interaction.followup.send(chosen)
 
 def setup(tree: app_commands.CommandTree):
     tree.add_command(gitissue)
     tree.add_command(out_of_office)
-    tree.add_command(fortune_cmd)
-    tree.add_command(cowsay_cmd)
     tree.add_command(trace_act)
-    tree.add_command(rennygadetarget)
     tree.add_command(attach_search)
-    tree.add_command(stuartlittle)
     tree.add_command(highriskroster)
     tree.add_command(highriskroster_view)
     tree.add_command(highriskroster_add)

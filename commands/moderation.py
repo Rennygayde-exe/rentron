@@ -1,6 +1,9 @@
+import logging
 import re
 import sys
 import time
+
+log = logging.getLogger(__name__)
 import zipfile
 import platform
 from pathlib import Path
@@ -16,8 +19,11 @@ import discord
 from discord import app_commands, Interaction, Attachment, File
 from discord.ext import commands
 from dotenv import load_dotenv
+from utils.command_book import save_command, get_commands, delete_command
+from utils.bot_helpers import save_helper, get_helpers, delete_helper, load_into_namespace
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BASE_DIR / ".env")
 TRACE_LOG_CHANNEL_ID = int(os.getenv("BLACKBIRDLOGS_ID", "0"))
 
 def progress_bar(current: int, total: int, width: int = 30) -> str:
@@ -161,7 +167,6 @@ class Moderation(commands.Cog):
                             seen_ids.add(target_id)
                             banned += 1
                         except Exception as e:
-                            # fallback search if we also have a username
                             uname = (entry.get("username") or "").strip().lower()
                             if uname:
                                 user_obj = name_map.get(uname)
@@ -181,7 +186,6 @@ class Moderation(commands.Cog):
                                 failed += 1
                                 print(f"Failed to ban {target_id}: {e}")
                 else:
-                    # No ID = try username-only fallback
                     uname = (entry.get("username") or "").strip().lower()
                     if not uname:
                         failed += 1
@@ -220,6 +224,7 @@ class Moderation(commands.Cog):
             await message.edit(content=f"Error: {e}")
     @app_commands.command(name="parse_zip", description="Parse a zip of .txt files into a banlist JSON and Excel.")
     @app_commands.describe(file="Upload a zip file containing .txt files with user info.")
+    @app_commands.checks.has_permissions(ban_members=True)
     async def parse_zip(self, interaction: Interaction, file: Attachment):
         if not file.filename.endswith(".zip"):
             await interaction.response.send_message("Please upload a `.zip` file.", ephemeral=True)
@@ -235,8 +240,15 @@ class Moderation(commands.Cog):
 
             banlist = []
             with TemporaryDirectory() as tmpdir:
+                tmp_root = Path(tmpdir).resolve()
                 with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-                    z.extractall(tmpdir)
+                    for member in z.infolist():
+                        target = (tmp_root / member.filename).resolve()
+                        if target != tmp_root and tmp_root not in target.parents:
+                            return await interaction.followup.send(
+                                f"Rejected: zip contains an unsafe path (`{member.filename}`)."
+                            )
+                    z.extractall(tmp_root)
 
                 for path in Path(tmpdir).rglob("*.txt"):
                     content = path.read_text(encoding="utf-8", errors="ignore")
@@ -267,22 +279,18 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="botstats", description="View bot uptime and stats.")
     async def botstats(self, interaction: Interaction):
-        now = time.time()
-        uptime_seconds = int(now - self.start_time)
-        uptime_str = str(timedelta(seconds=uptime_seconds))
-
-        process = psutil.Process()
-        mem = process.memory_info().rss / 1024 / 1024
-        system = platform.system()
-        python_ver = platform.python_version()
-
-        embed = discord.Embed(title="Rentron Bot Stats", color=discord.Color.blue())
-        embed.add_field(name="Uptime", value=uptime_str, inline=True)
-        embed.add_field(name="Memory Usage", value=f"{mem:.2f} MB", inline=True)
-        embed.add_field(name="System", value=system, inline=True)
-        embed.add_field(name="Python", value=python_ver, inline=True)
-
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.defer()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "neofetch", "--stdout",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            output = stdout.decode(errors="replace").strip()
+        except Exception as e:
+            output = f"Failed to run neofetch: {e}"
+        await interaction.followup.send(f"```\n{output}\n```")
 
     @app_commands.command(name="help", description="List all commands and what they do.")
     async def show_help(self, interaction: Interaction):
@@ -508,6 +516,370 @@ class Moderation(commands.Cog):
         await interaction.followup.send(file=File(b, filename=f"notes_{interaction.guild_id}.json"))
 
 
+class BotCommandEditModal(discord.ui.Modal, title="Edit Code"):
+    code = discord.ui.TextInput(
+        label="Code",
+        style=discord.TextStyle.paragraph,
+        max_length=4000,
+    )
+
+    def __init__(self, current_code: str):
+        super().__init__()
+        self.code.default = current_code
+        self.edited_code = None
+
+    async def on_submit(self, interaction: Interaction):
+        self.edited_code = self.code.value
+        await interaction.response.defer()
+
+
+class BotCommandConfirmView(discord.ui.View):
+    def __init__(self, action: dict, executor: discord.Member, code: str = ""):
+        super().__init__(timeout=120)
+        self.action = action
+        self.executor = executor
+        self.result = None
+        self.code = code
+
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        return interaction.user.id == self.executor.id
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: Interaction, button: discord.ui.Button):
+        self.result = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Edit", style=discord.ButtonStyle.blurple)
+    async def edit(self, interaction: Interaction, button: discord.ui.Button):
+        modal = BotCommandEditModal(self.code)
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+        if modal.edited_code:
+            self.code = modal.edited_code
+            await interaction.edit_original_response(
+                content=f"**Plan — review this code before confirming:**\n```python\n{self.code[:1500]}\n```",
+                view=self,
+            )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red)
+    async def cancel(self, interaction: Interaction, button: discord.ui.Button):
+        self.result = False
+        self.stop()
+        await interaction.response.defer()
+
+
+async def _exec_code(interaction: Interaction, code: str):
+    """Execute botcommand-style code. Returns (result_str, error_str)."""
+    guild = interaction.guild
+    import datetime as _dt
+
+    def find_channel(query: str):
+        query = str(query).strip().lstrip("<#").rstrip(">").lstrip("#")
+        if query.isdigit():
+            return guild.get_channel(int(query))
+        q = query.lower()
+        return (discord.utils.find(lambda c: c.name.lower() == q, guild.channels)
+                or discord.utils.find(lambda c: q in c.name.lower(), guild.channels))
+
+    def find_member(query: str):
+        query = str(query).strip().lstrip("<@!").rstrip(">")
+        if query.isdigit():
+            return guild.get_member(int(query))
+        return discord.utils.find(
+            lambda m: m.name.lower() == query.lower() or m.display_name.lower() == query.lower(),
+            guild.members,
+        )
+
+    def find_role(query: str):
+        query = str(query).strip().lstrip("<@&").rstrip(">")
+        if query.isdigit():
+            return guild.get_role(int(query))
+        return discord.utils.find(lambda r: r.name.lower() == query.lower(), guild.roles)
+
+    def list_roles(prefix: str = "") -> list:
+        return [r for r in guild.roles if r.name.lower().startswith(prefix.lower())]
+
+    def list_members_with_role(role_name: str) -> list:
+        role = find_role(role_name)
+        return [m for m in guild.members if role in m.roles] if role else []
+
+    def list_channels(prefix: str = "") -> list:
+        return [c for c in guild.text_channels if c.name.lower().startswith(prefix.lower())]
+
+    async def search_messages(keyword: str, limit_per_channel: int = 500, channel=None) -> list:
+        results = []
+        channels = [channel] if channel else guild.text_channels
+        for ch in channels:
+            try:
+                async for msg in ch.history(limit=limit_per_channel):
+                    if keyword.lower() in msg.content.lower() and not msg.author.bot:
+                        results.append({"author": str(msg.author), "author_id": msg.author.id, "channel": ch.name, "content": msg.content, "jump_url": msg.jump_url})
+            except Exception:
+                continue
+        return results
+
+    async def get_recent_messages(channel, limit: int = 50) -> list:
+        return [{"author": str(m.author), "author_id": m.author.id, "content": m.content, "created_at": m.created_at, "jump_url": m.jump_url, "id": m.id} async for m in channel.history(limit=limit)]
+
+    async def get_member_messages(member, limit_per_channel: int = 200) -> list:
+        results = []
+        for ch in guild.text_channels:
+            try:
+                async for msg in ch.history(limit=limit_per_channel):
+                    if msg.author.id == member.id:
+                        results.append({"channel": ch.name, "content": msg.content, "created_at": msg.created_at, "jump_url": msg.jump_url})
+            except Exception:
+                continue
+        return results
+
+    async def kick_member(member, reason: str = "No reason provided"):
+        await member.kick(reason=reason); return f"Kicked {member}"
+
+    async def ban_member(member, reason: str = "No reason provided", delete_days: int = 0):
+        await member.ban(reason=reason, delete_message_days=delete_days); return f"Banned {member}"
+
+    async def timeout_member(member, minutes: int = 10, reason: str = "No reason provided"):
+        await member.timeout(_dt.timedelta(minutes=minutes), reason=reason); return f"Timed out {member} for {minutes} minutes"
+
+    async def send_dm(member, message: str):
+        await member.send(message); return f"DMed {member}"
+
+    async def send_message(channel, message: str):
+        await channel.send(message); return f"Sent message to #{channel.name}"
+
+    async def add_role(member, role):
+        await member.add_roles(role); return f"Gave {member} the {role.name} role"
+
+    async def remove_role(member, role):
+        await member.remove_roles(role); return f"Removed {role.name} from {member}"
+
+    async def set_nickname(member, nickname: str):
+        await member.edit(nick=nickname); return f"Set {member}'s nickname to {nickname}"
+
+    async def create_role(name: str, color=None):
+        role = await guild.create_role(name=name, color=color or discord.Color.default()); return f"Created role {role.name}"
+
+    async def delete_role(role):
+        name = role.name; await role.delete(); return f"Deleted role {name}"
+
+    async def create_channel(name: str, category=None):
+        ch = await guild.create_text_channel(name, category=category); return f"Created channel #{ch.name}"
+
+    async def delete_channel(channel):
+        name = channel.name; await channel.delete(); return f"Deleted channel #{name}"
+
+    async def purge_channel(channel, limit: int = 10):
+        deleted = await channel.purge(limit=limit); return f"Deleted {len(deleted)} messages from #{channel.name}"
+
+    async def get_audit_log(limit: int = 20) -> list:
+        return [{"action": str(e.action), "user": str(e.user), "target": str(e.target), "reason": e.reason, "created_at": e.created_at} async for e in guild.audit_logs(limit=limit)]
+
+    def get_member_roles(member) -> list:
+        return [r.name for r in member.roles if r.name != "@everyone"]
+
+    def get_members_joined_after(date) -> list:
+        return [m for m in guild.members if m.joined_at and m.joined_at > date]
+
+    def get_members_joined_before(date) -> list:
+        return [m for m in guild.members if m.joined_at and m.joined_at < date]
+
+    def get_online_members() -> list:
+        return [m for m in guild.members if m.status != discord.Status.offline]
+
+    def member_info(member) -> dict:
+        return {"name": str(member), "id": member.id, "display_name": member.display_name, "joined_at": str(member.joined_at), "created_at": str(member.created_at), "roles": [r.name for r in member.roles if r.name != "@everyone"], "top_role": member.top_role.name, "bot": member.bot}
+
+    def role_info(role) -> dict:
+        return {"name": role.name, "id": role.id, "color": str(role.color), "members": len(role.members), "mentionable": role.mentionable, "position": role.position}
+
+    import pathlib as _pathlib
+    _bot_dir = _pathlib.Path(__file__).parent.parent
+    ns = {
+        "discord": discord, "asyncio": asyncio, "timedelta": timedelta, "datetime": _dt, "timezone": _dt.timezone,
+        "Path": _pathlib.Path, "BOT_DIR": _bot_dir,
+        "find_channel": find_channel, "find_member": find_member, "find_role": find_role,
+        "list_roles": list_roles, "list_members_with_role": list_members_with_role, "list_channels": list_channels,
+        "search_messages": search_messages, "get_recent_messages": get_recent_messages, "get_member_messages": get_member_messages,
+        "kick_member": kick_member, "ban_member": ban_member, "timeout_member": timeout_member,
+        "send_dm": send_dm, "send_message": send_message, "add_role": add_role, "remove_role": remove_role,
+        "set_nickname": set_nickname, "create_role": create_role, "delete_role": delete_role,
+        "create_channel": create_channel, "delete_channel": delete_channel, "purge_channel": purge_channel,
+        "get_audit_log": get_audit_log, "get_member_roles": get_member_roles,
+        "get_members_joined_after": get_members_joined_after, "get_members_joined_before": get_members_joined_before,
+        "get_online_members": get_online_members, "member_info": member_info, "role_info": role_info,
+    }
+    load_into_namespace(ns)
+    log.warning(
+        "botcommand EXEC by %s (%s) in guild %s:\n%s",
+        interaction.user, interaction.user.id, getattr(guild, "id", None), code,
+    )
+    if TRACE_LOG_CHANNEL_ID:
+        log_ch = interaction.client.get_channel(TRACE_LOG_CHANNEL_ID)
+        if log_ch:
+            try:
+                await log_ch.send(
+                    f"**botcommand exec** by {interaction.user.mention} (`{interaction.user.id}`) "
+                    f"in guild `{getattr(guild, 'id', '?')}`:\n```python\n{code[:1800]}\n```"
+                )
+            except Exception:
+                pass
+    try:
+        exec(compile(code, "<botcommand>", "exec"), ns)
+        run_fn = ns.get("run")
+        if not run_fn:
+            return None, "No `run` function found in generated code."
+        result = await run_fn(interaction.client, guild, interaction)
+        return str(result), None
+    except Exception as e:
+        return None, str(e)
+
+
+class SaveConfirmView(discord.ui.View):
+    def __init__(self, executor, prompt: str, code: str, msg, result_content: str):
+        super().__init__(timeout=60)
+        self.executor = executor
+        self.prompt = prompt
+        self.code = code
+        self.msg = msg
+        self.result_content = result_content
+
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        return interaction.user.id == self.executor.id
+
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.green)
+    async def save(self, interaction: Interaction, button: discord.ui.Button):
+        self.stop()
+        modal = SaveCommandModal(self.prompt, self.code, self.msg)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.gray)
+    async def cancel(self, interaction: Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content=self.result_content, view=None)
+
+
+class BotCommandInputModal(discord.ui.Modal, title="Bot Command"):
+    command = discord.ui.TextInput(
+        label="Command",
+        style=discord.TextStyle.paragraph,
+        placeholder="What do you want the bot to do?",
+        max_length=4000,
+    )
+
+    def __init__(self, model: str, hidden: bool, file):
+        super().__init__()
+        self.model = model
+        self.hidden = hidden
+        self.file = file
+        self.submitted = False
+        self.command_text = None
+        self.modal_interaction = None
+
+    async def on_submit(self, interaction: Interaction):
+        self.submitted = True
+        self.command_text = self.command.value
+        self.modal_interaction = interaction
+        self.stop()
+
+
+class BotPythonModal(discord.ui.Modal, title="Run Python Code"):
+    code = discord.ui.TextInput(
+        label="Code",
+        style=discord.TextStyle.paragraph,
+        placeholder="async def run(bot, guild, interaction):\n    return str(len(guild.members))",
+        max_length=4000,
+    )
+
+    async def on_submit(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await _execute_botpython(interaction, self.code.value, hidden=True)
+
+
+class BotPython(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="botpython", description="Execute custom Python code against the bot and guild.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(hidden="Whether the response is only visible to you (default: True)")
+    async def botpython(self, interaction: Interaction, hidden: bool = True):
+        modal = BotPythonModal()
+        await interaction.response.send_modal(modal)
+
+
+async def _execute_botpython(interaction: Interaction, code: str, hidden: bool = True):
+    guild = interaction.guild
+    import datetime as _dt
+    import io
+
+    def find_channel(query: str):
+        query = str(query).strip().lstrip("<#").rstrip(">").lstrip("#")
+        if query.isdigit():
+            return guild.get_channel(int(query))
+        q = query.lower()
+        return (discord.utils.find(lambda c: c.name.lower() == q, guild.channels)
+                or discord.utils.find(lambda c: q in c.name.lower(), guild.channels))
+
+    def find_member(query: str):
+        query = str(query).strip().lstrip("<@!").rstrip(">")
+        if query.isdigit():
+            return guild.get_member(int(query))
+        return discord.utils.find(
+            lambda m: m.name.lower() == query.lower() or m.display_name.lower() == query.lower(),
+            guild.members,
+        )
+
+    def find_role(query: str):
+        query = str(query).strip().lstrip("<@&").rstrip(">")
+        if query.isdigit():
+            return guild.get_role(int(query))
+        return discord.utils.find(lambda r: r.name.lower() == query.lower(), guild.roles)
+
+    namespace = {
+        "discord": discord,
+        "asyncio": asyncio,
+        "timedelta": timedelta,
+        "datetime": _dt,
+        "timezone": _dt.timezone,
+        "find_channel": find_channel,
+        "find_member": find_member,
+        "find_role": find_role,
+        "guild": guild,
+        "bot": interaction.client,
+        "interaction": interaction,
+    }
+
+    log.warning(
+        "botpython EXEC by %s (%s) in guild %s:\n%s",
+        interaction.user, interaction.user.id, getattr(guild, "id", None), code,
+    )
+    if TRACE_LOG_CHANNEL_ID:
+        log_ch = interaction.client.get_channel(TRACE_LOG_CHANNEL_ID)
+        if log_ch:
+            try:
+                await log_ch.send(
+                    f"**botpython exec** by {interaction.user.mention} (`{interaction.user.id}`):\n```python\n{code[:1800]}\n```"
+                )
+            except Exception:
+                pass
+    try:
+        exec(compile(code, "<botpython>", "exec"), namespace)
+        run_fn = namespace.get("run")
+        if not run_fn:
+            await interaction.followup.send("Error: code must define an `async def run(bot, guild, interaction)` function.", ephemeral=hidden)
+            return
+        result = await run_fn(interaction.client, guild, interaction)
+        output = f"```\n{result}\n```"
+        if len(output) > 1990:
+            file = discord.File(io.BytesIO(str(result).encode()), filename="output.txt")
+            await interaction.followup.send("Output too long, see attached file.", file=file, ephemeral=hidden)
+        else:
+            await interaction.followup.send(output, ephemeral=hidden)
+    except Exception as e:
+        await interaction.followup.send(f"Error: `{e}`", ephemeral=hidden)
+
+
 class Privacy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -576,25 +948,8 @@ class Privacy(commands.Cog):
             return
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="readme", description="View RenTron's README overview.")
-    async def readme(self, interaction: discord.Interaction):
-        readme_path = Path("README.md")
-
-        embed = self._build_embed_from_markdown(
-            readme_path,
-            title="RenTron README.md",
-            description="README.",
-            footer="© 2025 RenTron • Tools at the crossroads of security, creativity, and community."
-        )
-
-        if embed is None:
-            await interaction.response.send_message(
-                "README file (`README.md`) not found on the server.",
-                ephemeral=True
-            )
-            return
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Moderation(bot))
     await bot.add_cog(Privacy(bot))
+    await bot.add_cog(BotPython(bot))

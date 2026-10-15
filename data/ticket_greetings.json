@@ -1,0 +1,9 @@
+{
+  "_comment": "Wordings the bot may post when an application ticket opens; one is picked at random each time. {user} becomes the applicant's mention. Edits take effect on the next ticket - no restart needed. Every variation must keep the three things we need: Discord username, today's date, and service branch. Delete entries or add your own freely; if this file is missing or empty the bot falls back to TICKET_GREETING_TEXT in commands/.env.",
+  "greetings": [
+    "{user}, thanks for applying! Just to get your application rolling, may I please have you post a photo of your military ID or Veterans Card/DD-214 with a note over it showing your Discord username, today's date, and your service branch like the example below. Cover everything else please and a staff member will assist you shortly! Hope to see you around",
+    "Welcome {user}! Before we can approve you we just need to verify you to keep our community safe. Please may I ask you to post a photo of your military ID or Veterans Card/DD-214 with a note on top showing your Discord username, today's date, and your service branch, like the example below. You can cover PII and this image will be deleted after your application is done.  A staff member will be with you shortly.",
+    "Howdy partner! Thanks for your application {user} ! Verification is quick:  may I ask you to please take a photo of your military ID or Veterans Card/DD-214 with a note over it listing your Discord username, today's date, and your service branch, matching the example below. Everything else should stay hidden. A staff member will assist you shortly.",
+    "Thanks for applying, {user}! One step left: Please may I ask you to post a photo of your military ID or Veterans Card/DD-214 with a note on top showing your Discord username, today's date, and your service branch, like the example below. You can cover PII and this image will be deleted after your application is done."
+  ]
+}

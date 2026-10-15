@@ -13,7 +13,14 @@ YDL_COMMON_OPTS = {
     "quiet": True,
     "noplaylist": True,
     "default_search": "ytsearch",
+    "js_runtimes": {"node": {}},
+    "remote_components": ["ejs:github"],
 }
+
+COOKIES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "yt_cookies.txt"
+)
 
 def _normalize_po_token(raw: str | None, client: str) -> str | None:
     if not raw:
@@ -31,18 +38,18 @@ def _build_ydl_options():
     opts: list[dict] = [
         {
             **YDL_COMMON_OPTS,
-            "format": (
-                "bestaudio[protocol^=http][acodec!=none][ext=webm]/"
-                "bestaudio[protocol^=http][acodec!=none][ext=m4a]/"
-                "bestaudio[protocol^=http][acodec!=none]/"
-                "bestaudio"
-            ),
-            "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+            "format": "bestaudio/best",
+            "extractor_args": {"youtube": {"player_client": ["tv_embedded"]}},
         },
         {
             **YDL_COMMON_OPTS,
             "format": "bestaudio/best",
-            "extractor_args": {"youtube": {"player_client": ["web"]}},
+            "extractor_args": {"youtube": {"player_client": ["tv"]}},
+        },
+        {
+            **YDL_COMMON_OPTS,
+            "format": "bestaudio/best",
+            "extractor_args": {"youtube": {"player_client": ["web_creator"]}},
         },
     ]
 
@@ -141,8 +148,9 @@ class Music(commands.Cog):
 
         def _do():
             last_err: Exception | None = None
+            cookie_kwargs = {"cookiefile": COOKIES_FILE} if os.path.exists(COOKIES_FILE) else {}
             for override in YDL_OPTS:
-                opts = {**override}
+                opts = {**override, **cookie_kwargs}
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(query, download=False)
@@ -158,14 +166,22 @@ class Music(commands.Cog):
         return await asyncio.to_thread(_do)
 
     async def _ensure_voice(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None):
-        vc = interaction.guild.voice_client
-        if vc and vc.channel and (not channel or vc.channel.id == channel.id):
-            return vc
         if not channel:
             if not isinstance(interaction.user, discord.Member) or not interaction.user.voice:
                 raise RuntimeError("Join a voice channel first or provide one.")
             channel = interaction.user.voice.channel
-        return await channel.connect()
+
+        vc = interaction.guild.voice_client
+        if vc:
+            if not vc.is_connected():
+                await vc.disconnect(force=True)
+            elif vc.channel.id == channel.id:
+                return vc
+            else:
+                await vc.move_to(channel)
+                return vc
+
+        return await channel.connect(reconnect=True)
 
     async def _run_player(self, guild: discord.Guild):
         state = self._state(guild.id)
@@ -389,16 +405,48 @@ class Music(commands.Cog):
         vc.stop()
         await interaction.followup.send(f"Seeking to {secs}s.", ephemeral=True)
 
-    @app_commands.command(name="autoplay", description="Toggle autoplay when queue ends")
-    @app_commands.describe(mode="on or off")
-    async def autoplay(self, interaction: discord.Interaction, mode: str):
-        mode_l = mode.lower()
-        if mode_l not in ("on", "off"):
-            await interaction.response.send_message("Use on or off.", ephemeral=True)
+
+    @app_commands.command(name="cookies", description="Upload YouTube cookies file (Netscape format .txt)")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.describe(file="Netscape cookies .txt file exported from your browser")
+    async def cookies(self, interaction: discord.Interaction, file: discord.Attachment):
+        await interaction.response.defer(ephemeral=True)
+        if not file.filename.endswith(".txt"):
+            await interaction.followup.send("Please attach a .txt file in Netscape cookie format.", ephemeral=True)
             return
-        state = self._state(interaction.guild_id)
-        state.autoplay = (mode_l == "on")
-        await interaction.response.send_message(f"Autoplay {'enabled' if state.autoplay else 'disabled'}.", ephemeral=True)
+        if file.size > 1_000_000:
+            await interaction.followup.send(
+                "That file is far larger than a cookies export should be — refusing it.",
+                ephemeral=True)
+            return
+
+        data = await file.read()
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            await interaction.followup.send(
+                "That isn't a text file. Export in Netscape cookie format and try again.",
+                ephemeral=True)
+            return
+        if "\t" not in text and not text.lstrip().startswith("# Netscape"):
+            await interaction.followup.send(
+                "That doesn't look like a Netscape cookie jar (no tab-separated entries).",
+                ephemeral=True)
+            return
+
+        os.makedirs(os.path.dirname(COOKIES_FILE), exist_ok=True)
+        with open(COOKIES_FILE, "wb") as f:
+            f.write(data)
+        try:
+            os.chmod(COOKIES_FILE, 0o600)
+        except OSError:
+            pass
+        logging.info("%s (%s) uploaded a YouTube cookies file", interaction.user, interaction.user.id)
+        await interaction.followup.send(
+            "Cookies saved. yt-dlp will use them for the next song.\n"
+            "Reminder: these are a live login for that Google account — use a throwaway, "
+            "not your main.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

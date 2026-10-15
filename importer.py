@@ -1,8 +1,19 @@
 import requests, time, sqlite3
+from contextlib import contextmanager
 from commands.xp import XP_DB_PATH, calculate_level, init_xp_db
 
 GUILD_ID = "663035397416419351"
 PAGE_SIZE = 1000
+
+
+@contextmanager
+def _connect(path):
+    con = sqlite3.connect(path)
+    try:
+        with con:
+            yield con
+    finally:
+        con.close()
 
 players = []
 page = 0
@@ -19,14 +30,14 @@ while True:
     page += 1
     if len(chunk) < PAGE_SIZE:
         break
-    time.sleep(0.5)  # be nice to their API
+    time.sleep(0.5)
 
 print(f"Total fetched: {len(players)}")
-print(players[:3])  # preview
+print(players[:3])
 
 init_xp_db()
 
-with sqlite3.connect(XP_DB_PATH) as con:
+with _connect(XP_DB_PATH) as con:
     cur = con.cursor()
     for entry in players:
         try:
