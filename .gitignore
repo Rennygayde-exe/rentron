@@ -54,3 +54,6 @@ xp.db
 application_errors.log
 motd.md
 data/react_roles.json
+
+# Runtime state containing member IDs
+data/color_roles.json

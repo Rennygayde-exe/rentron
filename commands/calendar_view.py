@@ -73,7 +73,7 @@ def configuration_problem() -> str | None:
     if not GOOGLE_AVAILABLE:
         return ("The `google-auth` library isn't installed on the server yet.\n"
                 "An admin needs to run:\n"
-                "```\nsudo /home/ren/rentron/rentron/source/bin/pip install google-auth\n```")
+                "```\npip install google-auth\n```")
     if not _calendar_ids():
         return ("No calendar is configured. An admin needs to set `GOOGLE_CALENDAR_IDS` "
                 "in the bot's `.env` (Calendar Settings, Integrate calendar, Calendar ID). "

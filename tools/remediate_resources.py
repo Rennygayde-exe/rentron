@@ -1,12 +1,13 @@
+from pathlib import Path
 """Propose (and optionally apply) fixes to the existing resource rows.
 
 Dry run unless --commit. Deleting empty rows is a separate --delete-empty flag,
 because it removes records from a base that feeds a public website.
 """
 import argparse, asyncio, os, re, sys, aiohttp
-sys.path.insert(0, '/home/ren/rentron/rentron')
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dotenv import load_dotenv
-load_dotenv('/home/ren/rentron/rentron/.env')
+load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 from utils.resource_clean import normalise, resolve_location, looks_like_prose, is_url
 
 TOKEN, BASE = os.getenv("AIRTABLE_TOKEN"), os.getenv("AIRTABLE_BASE_ID")

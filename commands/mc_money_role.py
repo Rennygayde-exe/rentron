@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 WHITELIST_DB_PATH = str(Path(os.getenv("WHITELIST_DB_PATH") or (BASE_DIR / "data" / "whitelist.db")))
 TOP_MONEY_FILE = Path(os.getenv(
     "MC_TOP_MONEY_FILE",
-    "/home/ren/minecraft/plugins/Denizen/data/top_money_uuids.txt",
+    "",
 ))
 TOP_MONEY_ROLE_ID = int(os.getenv("TOP_MONEY_ROLE_ID", "1529886419672240168"))
 GUILD_ID = int(os.getenv("HOME_GUILD_ID", os.getenv("GUILD_ID", "0")))

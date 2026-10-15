@@ -1,8 +1,9 @@
+from pathlib import Path
 """Assert the remediation never drops content: every alphanumeric token present
 before a row is patched must still be present somewhere in the row after."""
 import asyncio,os,sys,re,importlib.util,aiohttp
-sys.path.insert(0,'/home/ren/rentron/rentron')
-from dotenv import load_dotenv; load_dotenv('/home/ren/rentron/rentron/.env')
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dotenv import load_dotenv; load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 spec=importlib.util.spec_from_file_location("rem",
   os.path.join(os.path.dirname(os.path.abspath(__file__)), "remediate_resources.py"))
 sys.argv=["rem"]
