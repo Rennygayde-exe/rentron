@@ -301,7 +301,7 @@ class Music(commands.Cog):
         lines = []
         for i, s in enumerate(list(state.queue)[:15], start=1):
             lines.append(f"{i}. {s.title}")
-        more = f"\n… +{len(state.queue)-15} more" if len(state.queue) > 15 else ""
+        more = f"\n... +{len(state.queue)-15} more" if len(state.queue) > 15 else ""
         await interaction.response.send_message("Queue:\n" + "\n".join(lines) + more)
 
     @app_commands.command(name="remove", description="Remove a song from the queue")
@@ -417,7 +417,7 @@ class Music(commands.Cog):
             return
         if file.size > 1_000_000:
             await interaction.followup.send(
-                "That file is far larger than a cookies export should be — refusing it.",
+                "That file is far larger than a cookies export should be - refusing it.",
                 ephemeral=True)
             return
 
@@ -445,7 +445,7 @@ class Music(commands.Cog):
         logging.info("%s (%s) uploaded a YouTube cookies file", interaction.user, interaction.user.id)
         await interaction.followup.send(
             "Cookies saved. yt-dlp will use them for the next song.\n"
-            "Reminder: these are a live login for that Google account — use a throwaway, "
+            "Reminder: these are a live login for that Google account - use a throwaway, "
             "not your main.", ephemeral=True)
 
 

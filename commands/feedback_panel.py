@@ -93,7 +93,7 @@ DEFAULT_PROMPT = (
     "**Staff will not see who sent this.** Your name, avatar and ID are not "
     "attached to your message and are not shown to anyone reviewing it.\n\n"
     "Please don't include details that identify you unless you want to be "
-    "identified — writing style and specific incidents can give you away even "
+    "identified - writing style and specific incidents can give you away even "
     "without a name."
 )
 DEFAULT_BUTTON_LABEL = "Send anonymous feedback"
@@ -347,7 +347,7 @@ class FeedbackModal(discord.ui.Modal):
             delay = random.uniform(low, high) if high else 0.0
 
             await interaction.response.send_message(
-                "Thank you — your feedback has been sent anonymously."
+                "Thank you - your feedback has been sent anonymously."
                 + ("\nIt is delivered on a delay so it can't be linked back to you." if delay else ""),
                 ephemeral=True,
             )
@@ -409,7 +409,7 @@ class FeedbackPanelView(discord.ui.View):
             per_window = max(1, RATE_WINDOW_SECONDS // cooldown)
             if not _check_and_count(_member_windows, interaction.user.id, per_window, now):
                 await interaction.response.send_message(
-                    "You've sent a few already — please wait a little while before sending more.",
+                    "You've sent a few already - please wait a little while before sending more.",
                     ephemeral=True,
                 )
                 return
@@ -451,9 +451,9 @@ class FeedbackPanels(commands.Cog):
         min_length="Shortest accepted submission (default 15 characters)",
     )
     @app_commands.choices(delay=[
-        app_commands.Choice(name="none — post immediately (default)", value="none"),
-        app_commands.Choice(name="short — 1 to 10 minutes", value="short"),
-        app_commands.Choice(name="long — 15 to 90 minutes", value="long"),
+        app_commands.Choice(name="none - post immediately (default)", value="none"),
+        app_commands.Choice(name="short - 1 to 10 minutes", value="short"),
+        app_commands.Choice(name="long - 15 to 90 minutes", value="long"),
     ])
     async def panel_create(
         self,
@@ -473,7 +473,7 @@ class FeedbackPanels(commands.Cog):
 
         if destination.id == interaction.channel.id:
             await interaction.followup.send(
-                "The destination must be a different channel — otherwise everyone who can "
+                "The destination must be a different channel - otherwise everyone who can "
                 "use the panel can also read the submissions.",
                 ephemeral=True,
             )
@@ -507,12 +507,12 @@ class FeedbackPanels(commands.Cog):
         readers = sum(1 for m in getattr(interaction.channel, "members", []) if not m.bot)
         warning = ""
         if destination.permissions_for(interaction.guild.default_role).read_messages:
-            warning = f"\n⚠️ {destination.mention} is readable by @everyone — submissions will be public."
+            warning = f"\n⚠️ {destination.mention} is readable by @everyone - submissions will be public."
 
         await interaction.followup.send(
             f"Panel posted. Submissions go to {destination.mention}.\n"
             f"Panel message ID `{message.id}` (needed to close it).\n"
-            f"Anonymity set: about **{readers}** people can use this panel — that is the most "
+            f"Anonymity set: about **{readers}** people can use this panel - that is the most "
             f"anyone could be hidden among.\n"
             f"Submissions are logged with their author to `{AUDIT_LOG_PATH.name}` on the server, "
             f"readable only with filesystem access." + warning,
@@ -564,7 +564,7 @@ class FeedbackPanels(commands.Cog):
         for p in panels:
             state = "open" if p["config"].get("enabled", True) else "closed"
             lines.append(
-                f"`{p['message_id']}` — in <#{p['channel_id']}> → <#{p['target_channel_id']}> "
+                f"`{p['message_id']}` - in <#{p['channel_id']}> → <#{p['target_channel_id']}> "
                 f"({state}, delay: {p['config'].get('delay_mode', 'short')})"
             )
         await interaction.followup.send("\n".join(lines)[:1900], ephemeral=True)

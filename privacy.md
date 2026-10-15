@@ -10,7 +10,7 @@ Source Code: [https://github.com/Rennygayde-exe/rentron](https://github.com/Renn
 ---
 
 ## 1. What RenTron Collects
-RenTron only collects and stores data that’s necessary for operation, such as:
+RenTron only collects and stores data that's necessary for operation, such as:
 
 - **User IDs and Message IDs:** Used internally for application systems, ticket management, and moderation tools.  
 - **Server Configuration Data:** Includes channel IDs and data prune schedules.
@@ -27,7 +27,7 @@ This includes:
 - Performing scheduled maintenance tasks such as automated data pruning.
 
 RenTron does **not** use user data for marketing, advertising, analytics, or profiling purposes.  
-All information remains securely hosted and managed within RenTron’s controlled environment in Seattle, Washington.
+All information remains securely hosted and managed within RenTron's controlled environment in Seattle, Washington.
 
 ---
 
@@ -55,7 +55,7 @@ RenTron employs appropriate technical safeguards to protect user data, including
 - Avoiding unnecessary data collection and minimizing data retention.
 
 While no system is entirely immune to security risks, RenTron is designed to manage user data responsibly and transparently.  
-RenTron’s source code is open for review at [GitHub](https://github.com/Rennygayde-exe/rentron).
+RenTron's source code is open for review at [GitHub](https://github.com/Rennygayde-exe/rentron).
 
 ---
 

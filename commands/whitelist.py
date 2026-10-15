@@ -224,7 +224,7 @@ class Whitelist(commands.Cog):
     async def whitelist_error(self, interaction: Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.CommandOnCooldown):
             await interaction.response.send_message(
-                f"Slow down a bit — try again in {error.retry_after:.0f}s.", ephemeral=True
+                f"Slow down a bit - try again in {error.retry_after:.0f}s.", ephemeral=True
             )
             return
         logger.exception("Unhandled error in /whitelist: %s", error)

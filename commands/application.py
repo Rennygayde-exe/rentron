@@ -241,7 +241,7 @@ def application_block_reason(user_id:int)->str|None:
         return ("You already have an application waiting on staff review. "
                 "Someone will get to it as soon as they can.")
     if status == "approved":
-        return ("Your application was already approved — you're in. If something looks "
+        return ("Your application was already approved - you're in. If something looks "
                 "wrong with your roles, ask a staff member.")
     return ("Your previous application was declined. If you would like it reconsidered, "
             "please reach out to a staff member.")
@@ -1268,7 +1268,7 @@ class ApplicationView(discord.ui.View):
                 )
                 return
             await interaction.response.send_message(
-                "Check your DMs — verify you're human, then press **Apply** again.",
+                "Check your DMs - verify you're human, then press **Apply** again.",
                 ephemeral=True,
             )
             return
@@ -1776,7 +1776,7 @@ def build_pending_table_embed(entries: list[dict]) -> discord.Embed:
             value=(
                 "We cannot tell whether these people left, so they are left alone. "
                 "Repair with `/remove_pending` then `/refreshview`:\n"
-                + "\n".join(f"`{e['message_id']}` — {e['username']}" for e in broken[:10])
+                + "\n".join(f"`{e['message_id']}` - {e['username']}" for e in broken[:10])
             )[:1024],
             inline=False,
         )
@@ -1807,7 +1807,7 @@ class CloseDepartedButton(discord.ui.Button):
             for e in self.departed[:25]
         )
         if len(self.departed) > 25:
-            preview += f"\n… and {len(self.departed) - 25} more"
+            preview += f"\n... and {len(self.departed) - 25} more"
         embed = discord.Embed(
             title=f"Close {len(self.departed)} application(s)?",
             description="```\n" + preview + "\n```",

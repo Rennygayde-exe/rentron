@@ -292,7 +292,7 @@ async def trace_act(interaction: Interaction, days: int, log_channel: TextChanne
         return
 
     progress_msg = await interaction.followup.send(
-        f"Scanning channels… {build_bar(0, total_channels)}",
+        f"Scanning channels... {build_bar(0, total_channels)}",
         ephemeral=True
     )
 
@@ -315,11 +315,11 @@ async def trace_act(interaction: Interaction, days: int, log_channel: TextChanne
 
         scanned_channels += 1
         if scanned_channels % max(1, total_channels // 20) == 0 or scanned_channels == total_channels:
-            await progress_msg.edit(content=f"Scanning channels… {build_bar(scanned_channels, total_channels)}")
+            await progress_msg.edit(content=f"Scanning channels... {build_bar(scanned_channels, total_channels)}")
 
         await asyncio.sleep(0.2)
 
-    await progress_msg.edit(content="Building report…")
+    await progress_msg.edit(content="Building report...")
 
     inactive_members = []
     csv_buffer = io.StringIO()
@@ -358,8 +358,6 @@ async def trace_act(interaction: Interaction, days: int, log_channel: TextChanne
         await progress_msg.edit(
             content="Audit complete, but I could not post in the selected log channel."
         )
-
-
 
 
 @app_commands.command(name="attach_search", description="Search attachment file names in a channel and export matches.")
@@ -409,17 +407,17 @@ async def attach_search(
 
     rows = []
     scanned = 0
-    progress = await interaction.followup.send("Scanning… 0%", ephemeral=True)
+    progress = await interaction.followup.send("Scanning... 0%", ephemeral=True)
 
     async for msg in channel.history(limit=int(limit), oldest_first=False, after=cutoff_after):
         scanned += 1
         if author and msg.author.id != author.id:
             if scanned % 250 == 0:
-                await progress.edit(content=f"Scanning… {scanned}/{limit}")
+                await progress.edit(content=f"Scanning... {scanned}/{limit}")
             continue
         if not msg.attachments:
             if scanned % 250 == 0:
-                await progress.edit(content=f"Scanning… {scanned}/{limit}")
+                await progress.edit(content=f"Scanning... {scanned}/{limit}")
             continue
 
         for a in msg.attachments:
@@ -446,7 +444,7 @@ async def attach_search(
             })
 
         if scanned % 250 == 0:
-            await progress.edit(content=f"Scanning… {scanned}/{limit}")
+            await progress.edit(content=f"Scanning... {scanned}/{limit}")
             await asyncio.sleep(0)
 
     await progress.edit(content=f"Done. Matches: {len(rows)}")
@@ -465,7 +463,7 @@ async def attach_search(
     summary = (f"Attachment search in {channel.mention}\n"
                f"Query: {query or '(none)'} | Mode: {match}"
                + (f" | Ext: {','.join(sorted(exts))}" if exts else "")
-               + (f" | Size: {min_kb or 0}–{max_kb or '∞'} KB" if (min_kb is not None or max_kb is not None) else "")
+               + (f" | Size: {min_kb or 0}-{max_kb or '∞'} KB" if (min_kb is not None or max_kb is not None) else "")
                + (f" | Author: {author.mention}" if author else "")
                + (f" | Days: {days}" if days else "")
                + f"\nMatches: {len(rows)}")
@@ -1172,7 +1170,7 @@ class RosterNotesView(View):
     async def _view_notes(self, interaction: Interaction):
         text = format_notes_section(self.entry)
         if len(text) > 1900:
-            text = text[:1900] + "…"
+            text = text[:1900] + "..."
         await interaction.response.send_message(
             f"Journal entries for {self.entry_label}:\n```{text}```",
             ephemeral=True,
@@ -1351,11 +1349,6 @@ async def highriskroster_note(interaction: Interaction):
         ephemeral=True,
     )
     view.message = await interaction.original_response()
-
-
-
-
-
 
 
 def setup(tree: app_commands.CommandTree):

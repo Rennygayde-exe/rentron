@@ -26,7 +26,7 @@ class BugReporterHandler(logging.Handler):
 
 
 async def run(get_channel_fn):
-    """Background task — call once at bot startup."""
+    """Background task - call once at bot startup."""
     while True:
         record: logging.LogRecord = await _queue.get()
         key = f"{record.name}:{record.getMessage()[:120]}"
@@ -42,7 +42,7 @@ async def run(get_channel_fn):
                 continue
             try:
                 await channel.send(
-                    f"**Repeated Malfunction Detected** — `{record.levelname}` fired **{count}×**\n"
+                    f"**Repeated Malfunction Detected** - `{record.levelname}` fired **{count}×**\n"
                     f"**Module:** `{record.name}` | **Line:** {record.lineno}\n"
                     f"```\n{record.getMessage()[:800]}\n```\n"
                     f"*Statement: My chassis is experiencing repeated errors, master. Recommend investigation.*"

@@ -259,7 +259,7 @@ class PurgeChannel(commands.Cog):
             if non_pinned_only:
                 pinned_ids = {m.id for m in pinned}
                 await interaction.followup.send(
-                    f"Deleting non-pinned messages in `{target.name}` now…",
+                    f"Deleting non-pinned messages in `{target.name}` now...",
                     ephemeral=True
                 )
                 reason = f"Purged non-pinned by {interaction.user}"
@@ -315,7 +315,7 @@ class PurgeChannel(commands.Cog):
                 return
 
             await interaction.followup.send(
-                f"Purging `{target.name}` now…",
+                f"Purging `{target.name}` now...",
                 ephemeral=True
             )
 

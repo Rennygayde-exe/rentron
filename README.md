@@ -13,12 +13,12 @@
 
 ## Features
 
-- **Application** – Modular and easy to use applications handled via DM's, stored in sql
-- **Blackbird Integration** – OSINT tools with the ability to pass arguements
-- **Application Review System** – Staff can approve and deny applications, or open tickets with users
-- **Ticket System** – Auto-creates private channels with transcript exports
-- **Modular Command Structure** – All commands are split across the `commands/` file structure
-- **SIGNAL CLI* – Send text messages to Signal Groupchats!
+- **Application** - Modular and easy to use applications handled via DM's, stored in sql
+- **Blackbird Integration** - OSINT tools with the ability to pass arguements
+- **Application Review System** - Staff can approve and deny applications, or open tickets with users
+- **Ticket System** - Auto-creates private channels with transcript exports
+- **Modular Command Structure** - All commands are split across the `commands/` file structure
+- **SIGNAL CLI* - Send text messages to Signal Groupchats!
 
 ---
 

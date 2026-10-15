@@ -80,7 +80,7 @@ class ModNotes(commands.Cog):
             t = n["ts"].replace("T"," ").split(".")[0]
             tag = f" [{', '.join(n['tags'])}]" if n.get("tags") else ""
             lines.append(f"#{n['id']} • {t} • by <@{n['author_id']}>{tag}\n{n['note']}")
-        await interaction.followup.send(f"Notes for {member} — page {page}/{pages}\n\n" + "\n\n".join(lines))
+        await interaction.followup.send(f"Notes for {member} - page {page}/{pages}\n\n" + "\n\n".join(lines))
 
     @notes_group.command(name="remove", description="Remove a note by id")
     @app_commands.checks.has_permissions(manage_messages=True)

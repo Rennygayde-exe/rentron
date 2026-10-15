@@ -19,8 +19,6 @@ import discord
 from discord import app_commands, Interaction, Attachment, File
 from discord.ext import commands
 from dotenv import load_dotenv
-from utils.command_book import save_command, get_commands, delete_command
-from utils.bot_helpers import save_helper, get_helpers, delete_helper, load_into_namespace
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
@@ -326,7 +324,7 @@ class Moderation(commands.Cog):
             return
 
         entries.sort(key=lambda x: x[0].lower())
-        lines = [f"{label} — {desc}" for label, desc in entries]
+        lines = [f"{label} - {desc}" for label, desc in entries]
 
         chunks: list[str] = []
         current = ""
@@ -459,7 +457,7 @@ class Moderation(commands.Cog):
             t = n["ts"].replace("T"," ").split(".")[0]
             tag = f" [{', '.join(n['tags'])}]" if n.get("tags") else ""
             lines.append(f"#{n['id']} • {t} • by <@{n['author_id']}>{tag}\n{n['note']}")
-        await interaction.followup.send(f"Notes for {member} — page {page}/{pages}\n\n" + "\n\n".join(lines))
+        await interaction.followup.send(f"Notes for {member} - page {page}/{pages}\n\n" + "\n\n".join(lines))
 
     @notes_group.command(name="remove", description="Remove a note by id")
     @app_commands.checks.has_permissions(manage_messages=True)
@@ -516,7 +514,7 @@ class Moderation(commands.Cog):
         await interaction.followup.send(file=File(b, filename=f"notes_{interaction.guild_id}.json"))
 
 
-class BotCommandEditModal(discord.ui.Modal, title="Edit Code"):
+class BotPythonEditModal(discord.ui.Modal, title="Edit Code"):
     code = discord.ui.TextInput(
         label="Code",
         style=discord.TextStyle.paragraph,
@@ -533,7 +531,7 @@ class BotCommandEditModal(discord.ui.Modal, title="Edit Code"):
         await interaction.response.defer()
 
 
-class BotCommandConfirmView(discord.ui.View):
+class BotPythonConfirmView(discord.ui.View):
     def __init__(self, action: dict, executor: discord.Member, code: str = ""):
         super().__init__(timeout=120)
         self.action = action
@@ -552,13 +550,13 @@ class BotCommandConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Edit", style=discord.ButtonStyle.blurple)
     async def edit(self, interaction: Interaction, button: discord.ui.Button):
-        modal = BotCommandEditModal(self.code)
+        modal = BotPythonEditModal(self.code)
         await interaction.response.send_modal(modal)
         await modal.wait()
         if modal.edited_code:
             self.code = modal.edited_code
             await interaction.edit_original_response(
-                content=f"**Plan — review this code before confirming:**\n```python\n{self.code[:1500]}\n```",
+                content=f"**Plan - review this code before confirming:**\n```python\n{self.code[:1500]}\n```",
                 view=self,
             )
 
@@ -570,7 +568,7 @@ class BotCommandConfirmView(discord.ui.View):
 
 
 async def _exec_code(interaction: Interaction, code: str):
-    """Execute botcommand-style code. Returns (result_str, error_str)."""
+    """Execute botpython-style code. Returns (result_str, error_str)."""
     guild = interaction.guild
     import datetime as _dt
 
@@ -709,9 +707,8 @@ async def _exec_code(interaction: Interaction, code: str):
         "get_members_joined_after": get_members_joined_after, "get_members_joined_before": get_members_joined_before,
         "get_online_members": get_online_members, "member_info": member_info, "role_info": role_info,
     }
-    load_into_namespace(ns)
     log.warning(
-        "botcommand EXEC by %s (%s) in guild %s:\n%s",
+        "botpython EXEC by %s (%s) in guild %s:\n%s",
         interaction.user, interaction.user.id, getattr(guild, "id", None), code,
     )
     if TRACE_LOG_CHANNEL_ID:
@@ -719,13 +716,13 @@ async def _exec_code(interaction: Interaction, code: str):
         if log_ch:
             try:
                 await log_ch.send(
-                    f"**botcommand exec** by {interaction.user.mention} (`{interaction.user.id}`) "
+                    f"**botpython exec** by {interaction.user.mention} (`{interaction.user.id}`) "
                     f"in guild `{getattr(guild, 'id', '?')}`:\n```python\n{code[:1800]}\n```"
                 )
             except Exception:
                 pass
     try:
-        exec(compile(code, "<botcommand>", "exec"), ns)
+        exec(compile(code, "<botpython>", "exec"), ns)
         run_fn = ns.get("run")
         if not run_fn:
             return None, "No `run` function found in generated code."
@@ -733,54 +730,6 @@ async def _exec_code(interaction: Interaction, code: str):
         return str(result), None
     except Exception as e:
         return None, str(e)
-
-
-class SaveConfirmView(discord.ui.View):
-    def __init__(self, executor, prompt: str, code: str, msg, result_content: str):
-        super().__init__(timeout=60)
-        self.executor = executor
-        self.prompt = prompt
-        self.code = code
-        self.msg = msg
-        self.result_content = result_content
-
-    async def interaction_check(self, interaction: Interaction) -> bool:
-        return interaction.user.id == self.executor.id
-
-    @discord.ui.button(label="Save", style=discord.ButtonStyle.green)
-    async def save(self, interaction: Interaction, button: discord.ui.Button):
-        self.stop()
-        modal = SaveCommandModal(self.prompt, self.code, self.msg)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.gray)
-    async def cancel(self, interaction: Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.edit_message(content=self.result_content, view=None)
-
-
-class BotCommandInputModal(discord.ui.Modal, title="Bot Command"):
-    command = discord.ui.TextInput(
-        label="Command",
-        style=discord.TextStyle.paragraph,
-        placeholder="What do you want the bot to do?",
-        max_length=4000,
-    )
-
-    def __init__(self, model: str, hidden: bool, file):
-        super().__init__()
-        self.model = model
-        self.hidden = hidden
-        self.file = file
-        self.submitted = False
-        self.command_text = None
-        self.modal_interaction = None
-
-    async def on_submit(self, interaction: Interaction):
-        self.submitted = True
-        self.command_text = self.command.value
-        self.modal_interaction = interaction
-        self.stop()
 
 
 class BotPythonModal(discord.ui.Modal, title="Run Python Code"):

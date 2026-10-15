@@ -131,7 +131,7 @@ class AuditSnapshot(commands.Cog):
     async def before_auto_snapshot_loop(self):
         await self.bot.wait_until_ready()
 
-    @app_commands.command(name="snapshot", description="Create a JSON snapshot of the server’s config.")
+    @app_commands.command(name="snapshot", description="Create a JSON snapshot of the server's config.")
     @app_commands.describe(name="Name for the snapshot file")
     @app_commands.checks.has_permissions(administrator=True)
     async def snapshot(self, interaction: discord.Interaction, name: str):
@@ -141,7 +141,7 @@ class AuditSnapshot(commands.Cog):
         filename = _safe_snapshot_filename(name)
         if filename is None:
             return await interaction.followup.send(
-                "Invalid snapshot name — use only letters, numbers, `_` and `-`."
+                "Invalid snapshot name - use only letters, numbers, `_` and `-`."
             )
         snapshot, filepath = await self._save_snapshot_file(guild, filename)
 
@@ -178,7 +178,7 @@ class AuditRestore(commands.Cog):
         filename = _safe_snapshot_filename(name)
         if filename is None:
             return await interaction.followup.send(
-                "Invalid snapshot name — use only letters, numbers, `_` and `-`."
+                "Invalid snapshot name - use only letters, numbers, `_` and `-`."
             )
         filepath = os.path.join(SNAPSHOT_DIR, filename)
         if not os.path.exists(filepath):

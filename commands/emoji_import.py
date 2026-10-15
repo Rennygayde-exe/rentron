@@ -296,14 +296,14 @@ class EmojiImport(commands.Cog):
             parts.append(" ".join(added_display))
 
         marks = {"ok": "✅", "skip": "➖", "fail": "❌"}
-        lines = [f"{marks[result]} `:{src}:`" + (f" — {detail}" if detail else "")
+        lines = [f"{marks[result]} `:{src}:`" + (f" - {detail}" if detail else "")
                  for src, result, detail in outcomes]
         parts.append("\n".join(lines))
         parts.append(f"\n*Slots: {used_static}/{limit} static, {used_animated}/{limit} animated.*")
 
         body = "\n".join(parts)
         if len(body) > 1900:
-            body = body[:1850].rsplit("\n", 1)[0] + "\n*…truncated.*"
+            body = body[:1850].rsplit("\n", 1)[0] + "\n*...truncated.*"
         await interaction.followup.send(body, ephemeral=True)
 
 

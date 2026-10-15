@@ -586,7 +586,7 @@ class ResourceSubmissions(commands.Cog):
         except RuntimeError as exc:
             await interaction.followup.send(f"Couldn't reach Airtable: {exc}", ephemeral=True)
             return
-        lines = [f"**{t['name']}** — {len(t.get('fields', []))} fields" for t in tables]
+        lines = [f"**{t['name']}** - {len(t.get('fields', []))} fields" for t in tables]
         await interaction.followup.send("\n".join(lines)[:1900], ephemeral=True)
 
 

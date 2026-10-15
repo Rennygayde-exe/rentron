@@ -357,7 +357,7 @@ TARGET_PANELS: dict[str, dict] = {
     "community": {
         "title": "Community & Interests",
         "description": (
-            "Pick the roles you want. You can change them any time — open this "
+            "Pick the roles you want. You can change them any time - open this "
             "again and your current roles will already be ticked."
         ),
         "mode": "multi",
@@ -387,7 +387,7 @@ def build_colour_panel(guild: discord.Guild) -> tuple[int, list[str]]:
         save_panel("colour", guild.id, {
             "title": "Name Colour",
             "description": ("Pick one colour for your name. Choosing a new one replaces "
-                            "your old one automatically — use **Remove** to go back to default."),
+                            "your old one automatically - use **Remove** to go back to default."),
             "mode": "exclusive",
             "entries": entries,
             "posted": bool(existing and existing.get("message_id")),
@@ -498,15 +498,15 @@ async def apply_role_selection(member: discord.Member, panel_entries: list[dict]
     for rid in [r for r in panel_ids if r in selected and r not in current]:
         role = guild.get_role(rid)
         if role is None:
-            failed.append(f"{label_for(rid)} — that role no longer exists")
+            failed.append(f"{label_for(rid)} - that role no longer exists")
             continue
         try:
             await member.add_roles(role, reason="Role panel")
             added.append(label_for(rid))
         except discord.Forbidden:
-            failed.append(f"{label_for(rid)} — I don't have permission to give you this role")
+            failed.append(f"{label_for(rid)} - I don't have permission to give you this role")
         except discord.HTTPException:
-            failed.append(f"{label_for(rid)} — Discord rejected the change, try again")
+            failed.append(f"{label_for(rid)} - Discord rejected the change, try again")
 
     for rid in [r for r in panel_ids if r not in selected and r in current]:
         role = guild.get_role(rid)
@@ -516,9 +516,9 @@ async def apply_role_selection(member: discord.Member, panel_entries: list[dict]
             await member.remove_roles(role, reason="Role panel")
             removed.append(label_for(rid))
         except discord.Forbidden:
-            failed.append(f"{label_for(rid)} — I don't have permission to remove this role")
+            failed.append(f"{label_for(rid)} - I don't have permission to remove this role")
         except discord.HTTPException:
-            failed.append(f"{label_for(rid)} — Discord rejected the change, try again")
+            failed.append(f"{label_for(rid)} - Discord rejected the change, try again")
 
     return added, removed, failed
 
@@ -578,7 +578,7 @@ class RolePickerSelect(discord.ui.Select):
         if failed:
             parts.append("**Couldn't change:**\n" + "\n".join(f"• {f}" for f in failed))
         if not parts:
-            parts.append("No changes — you already had exactly those roles.")
+            parts.append("No changes - you already had exactly those roles.")
         await interaction.followup.send("\n".join(parts)[:1900], ephemeral=True)
 
 
@@ -667,7 +667,7 @@ async def refresh_posted_panel(bot: commands.Bot, panel: dict) -> str | None:
     try:
         message = await channel.fetch_message(int(panel["message_id"]))
     except discord.NotFound:
-        return "the posted message no longer exists — re-post it with `/roles post`"
+        return "the posted message no longer exists - re-post it with `/roles post`"
     except (discord.Forbidden, discord.HTTPException):
         return "the posted message could not be edited"
     try:
@@ -708,7 +708,7 @@ def build_panel_embed(panel: dict) -> discord.Embed:
     lines = []
     for e in cfg.get("entries", []):
         emoji = e.get("emoji") or "•"
-        desc = f" — {e['description']}" if e.get("description") else ""
+        desc = f" - {e['description']}" if e.get("description") else ""
         lines.append(f"{emoji} **{e.get('label')}**{desc}")
     if lines:
         embed.add_field(name="​", value="\n".join(lines)[:1024], inline=False)
@@ -745,14 +745,14 @@ class RolePanels(commands.Cog):
         msg = "**Panels built:**\n" + "\n".join(f"• {b}" for b in built) if built else "Nothing built."
         if skipped:
             msg += "\n\n**Skipped (role not found):**\n" + "\n".join(f"• {s}" for s in skipped)
-        msg += "\n\nNothing is live yet — use `/roles post` to publish one."
+        msg += "\n\nNothing is live yet - use `/roles post` to publish one."
         await interaction.followup.send(msg[:1900], ephemeral=True)
 
     @roles.command(name="add", description="Add a role to a panel")
     @app_commands.checks.has_permissions(manage_roles=True)
     @app_commands.describe(
         panel="Which panel to add it to",
-        role="The role — pick it from the list, no IDs needed",
+        role="The role - pick it from the list, no IDs needed",
         emoji="Emoji shown next to it",
         description="Short line explaining what the role is for",
     )
@@ -768,7 +768,7 @@ class RolePanels(commands.Cog):
         row = get_panel(panel.value)
         if not row:
             await interaction.followup.send(
-                f"No `{panel.value}` panel yet — run `/roles setup` first.", ephemeral=True)
+                f"No `{panel.value}` panel yet - run `/roles setup` first.", ephemeral=True)
             return
 
         clean_emoji, emoji_err = validate_emoji(emoji)
@@ -803,7 +803,7 @@ class RolePanels(commands.Cog):
             other = next(e["label"] for e in entries if e.get("emoji") == clean_emoji)
             await interaction.followup.send(
                 f"{clean_emoji} is already used by **{other}** on that panel. "
-                "Duplicate emoji made two roles unreachable in the old system — pick another.",
+                "Duplicate emoji made two roles unreachable in the old system - pick another.",
                 ephemeral=True)
             return
 
@@ -816,7 +816,7 @@ class RolePanels(commands.Cog):
         msg = f"Added **{role.name}** to *{cfg.get('title')}* ({len(entries)} roles)."
         msg += f"\n⚠️ Saved, but {note}." if note else (
             "\nThe posted panel has been updated." if row.get("message_id")
-            else "\nNot posted yet — use `/roles post` when ready.")
+            else "\nNot posted yet - use `/roles post` when ready.")
         log.info("%s added role %s to panel %s", interaction.user, role.id, panel.value)
         await interaction.followup.send(msg, ephemeral=True)
 
@@ -844,7 +844,7 @@ class RolePanels(commands.Cog):
         save_panel(panel.value, interaction.guild.id, cfg)
         note = await refresh_posted_panel(self.bot, get_panel(panel.value))
         msg = (f"Removed **{role.name}** from *{cfg.get('title')}* ({len(entries)} left).\n"
-               "Nobody loses the role they already have — it just stops being offered here.")
+               "Nobody loses the role they already have - it just stops being offered here.")
         if note:
             msg += f"\n⚠️ Saved, but {note}."
         log.info("%s removed role %s from panel %s", interaction.user, role.id, panel.value)
@@ -867,7 +867,7 @@ class RolePanels(commands.Cog):
         row = get_panel(panel.value)
         if not row or not row["config"].get("entries"):
             await interaction.followup.send(
-                f"No `{panel.value}` panel yet — run `/roles setup` first.", ephemeral=True)
+                f"No `{panel.value}` panel yet - run `/roles setup` first.", ephemeral=True)
             return
 
         target = channel or interaction.channel
@@ -890,7 +890,7 @@ class RolePanels(commands.Cog):
                     problems.append(f"**{role.name}** is managed by an integration and can't be assigned.")
         if problems:
             await interaction.followup.send(
-                "**Not posting — fix these first:**\n" + "\n".join(f"• {p}" for p in problems[:12]),
+                "**Not posting - fix these first:**\n" + "\n".join(f"• {p}" for p in problems[:12]),
                 ephemeral=True)
             return
 
@@ -922,7 +922,7 @@ class RolePanels(commands.Cog):
             header = (f"**Imported {count} panel(s).** The legacy menus and reaction "
                       f"messages are untouched and still live.\n")
         else:
-            header = ("**Dry run — nothing was written.**\nRe-run with `commit: True` "
+            header = ("**Dry run - nothing was written.**\nRe-run with `commit: True` "
                       "to import. Legacy data is never modified either way.\n")
 
         body = f"{header}```\n{report[:1800]}\n```"
@@ -945,14 +945,14 @@ class RolePanels(commands.Cog):
         for p in rows:
             cfg = p["config"]
             where = f" in <#{p['channel_id']}>" if p.get("message_id") else " *(not posted)*"
-            line = (f"`{p['panel_key']}` — **{cfg.get('title','Roles')}** — "
+            line = (f"`{p['panel_key']}` - **{cfg.get('title','Roles')}** - "
                     f"{len(cfg.get('entries', []))} roles{where}")
             (legacy if p["panel_key"].startswith("legacy-") else live).append(line)
         out = []
         if live:
             out.append("**Panels**\n" + "\n".join(live))
         if legacy:
-            out.append(f"\n**Imported history** ({len(legacy)}) — kept for reference, not posted\n"
+            out.append(f"\n**Imported history** ({len(legacy)}) - kept for reference, not posted\n"
                        + "\n".join(legacy))
         await interaction.followup.send("\n".join(out)[:1900], ephemeral=True)
 

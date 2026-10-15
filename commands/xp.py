@@ -230,7 +230,7 @@ class XPCog(commands.Cog):
         for idx, (user_id, xp, level) in enumerate(rows, start=1):
             member = interaction.guild.get_member(user_id)
             display = member.display_name if member else f"User {user_id}"
-            lines.append(f"{idx}. {display} — {xp} XP (Level {level})")
+            lines.append(f"{idx}. {display} - {xp} XP (Level {level})")
         await interaction.response.send_message("\n".join(lines))
 
     @app_commands.command(

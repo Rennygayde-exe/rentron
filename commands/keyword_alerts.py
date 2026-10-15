@@ -124,7 +124,7 @@ class KeywordAlerts(commands.Cog):
                        + (f" • bots" if r.get('include_bots') else "")
                        + f" • cd:{r.get('cooldown',20)}s")
         txt = "\n".join(out)
-        await i.followup.send(txt[:1900] if len(txt)<=1900 else txt[:1900]+"…", ephemeral=True)
+        await i.followup.send(txt[:1900] if len(txt)<=1900 else txt[:1900]+"...", ephemeral=True)
 
     def _match(self, r: dict, m: discord.Message) -> bool:
         if r.get("scope_channel_id") and int(r["scope_channel_id"]) != m.channel.id:

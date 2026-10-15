@@ -279,6 +279,5 @@ class ColorRoles(commands.Cog):
         await interaction.followup.send("Your color role has been removed.", ephemeral=True)
 
 
-
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ColorRoles(bot))

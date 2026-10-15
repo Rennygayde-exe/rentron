@@ -84,7 +84,7 @@ class E2Simulator(commands.Cog):
 
         fig, ax = plt.subplots()
         ax.plot(times, conc, lw=2)
-        ax.set_title(f"{labels[injection]} — {dose} mg q{interval} h")
+        ax.set_title(f"{labels[injection]} - {dose} mg q{interval} h")
         ax.set_xlabel("Time (days)")
         ax.set_ylabel("Concentration (pg/mL)")
         ax.grid(True)

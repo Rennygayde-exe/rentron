@@ -56,11 +56,8 @@ import utils.pentagon_pizza_index as pizza_index
 from aiohttp import web
 import subprocess
 import utils.usage_log as usage_log
-import utils.ai_scanner as ai_scanner
-import utils.flag_history as flag_history
 import utils.command_log as command_log
 import utils.bug_reporter as bug_reporter
-import utils.scanner_feedback as scanner_feedback
 
 
 try:
@@ -91,6 +88,7 @@ CONTROL_API_HOST = os.getenv("BOT_CONTROL_HOST", "127.0.0.1")
 CONTROL_API_PORT = int(os.getenv("BOT_CONTROL_PORT", "8765"))
 CONTROL_API_TOKEN = os.getenv("BOT_CONTROL_TOKEN", "")
 XP_CHANNEL_ID = int(os.getenv("XP_NOTIFICATION_CHANNEL_ID", "0"))
+BUG_REPORT_CHANNEL_ID = int(os.getenv("BUG_REPORT_CHANNEL_ID", "0"))
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 LAST_COMMIT_FILE = REPO_ROOT / "data" / "last_commit.txt"
 PENTAGON_PIZZA_ASSETS = REPO_ROOT / "web_assets" / "pentagon_pizza"
@@ -556,7 +554,7 @@ def _render_pentagon_pizza_page(graph_b64: str, summary: dict, history_count: in
     <header>
       <div class="status">{busy_label}</div>
       <h1>Pentagon Pizza Index</h1>
-      <p>{stats_line} — last update {html.escape(timestamp)}</p>
+      <p>{stats_line} - last update {html.escape(timestamp)}</p>
     </header>
     <div class="cards">
       <div class="card">
@@ -717,7 +715,7 @@ textarea{height:120px;resize:vertical;}
 
   <div class="card">
     <h2>Now Playing</h2>
-    <div id="now-title" class="now">—</div>
+    <div id="now-title" class="now">-</div>
     <div id="now-sub" class="sub"></div>
     <div class="btns">
       <button onclick="ctrl('pause')">⏸ Pause</button>
@@ -734,7 +732,7 @@ textarea{height:120px;resize:vertical;}
   <div class="card">
     <h2>Play a Song</h2>
     <div class="play-row">
-      <input type="text" id="query" placeholder="URL or search terms…" onkeydown="if(event.key==='Enter')play()">
+      <input type="text" id="query" placeholder="URL or search terms..." onkeydown="if(event.key==='Enter')play()">
       <button onclick="play()">▶ Play</button>
     </div>
   </div>
@@ -790,7 +788,7 @@ async function play(){
   const q = document.getElementById('query').value.trim();
   if(!q) return;
   document.getElementById('query').value='';
-  toast('Queueing…');
+  toast('Queueing...');
   const d = await api('/music/play','POST',{query:q});
   if(d) toast(d.message||'Queued', d.error);
 }
@@ -813,7 +811,7 @@ async function uploadCookies(){
 function updateStatus(s){
   const dot = document.getElementById('status-dot');
   dot.className = s.playing ? 'on' : '';
-  document.getElementById('now-title').textContent = s.now ? s.now.title : '—';
+  document.getElementById('now-title').textContent = s.now ? s.now.title : '-';
   document.getElementById('now-sub').textContent = s.now ? (s.now.page_url||'') : (s.playing ? 'Playing' : 'Nothing playing');
   if(s.guild) document.getElementById('guild-name').textContent = s.guild;
   const vol = s.volume != null ? Math.round(s.volume*100) : null;
@@ -1093,9 +1091,9 @@ async def announce_recent_commits(bot: commands.Bot) -> None:
     for commit_hash, author, subject, url in reversed(updates):
         short_hash = commit_hash[:7]
         if url == commit_hash:
-            message_lines.append(f"- `{short_hash}` {subject} — {author}")
+            message_lines.append(f"- `{short_hash}` {subject} - {author}")
         else:
-            message_lines.append(f"- [`{short_hash}`]({url}) {subject} — {author}")
+            message_lines.append(f"- [`{short_hash}`]({url}) {subject} - {author}")
     channel = bot.get_channel(XP_CHANNEL_ID)
     if channel is None:
         try:
@@ -1278,8 +1276,10 @@ async def on_ready():
     _control_api_task.add_done_callback(lambda t: _log_background_task_exception(t, "start_control_api"))
 
     _bug_reporter_task = bot.loop.create_task(
-        bug_reporter.run(lambda: bot.get_channel(ai_scanner.ALERT_CHANNEL_ID))
+        bug_reporter.run(lambda: bot.get_channel(BUG_REPORT_CHANNEL_ID))
     )
+    _bug_reporter_task.add_done_callback(lambda t: _log_background_task_exception(t, "bug_reporter.run"))
+
     _bug_reporter_task.add_done_callback(lambda t: _log_background_task_exception(t, "bug_reporter.run"))
 
 
@@ -1340,107 +1340,8 @@ async def on_message(message: discord.Message):
                     usage_log.log_sunset_usage(int(sunset["id"]), role_id, role_name)
             break
 
-    asyncio.ensure_future(_ai_scan(message))
 
     await bot.process_commands(message)
-
-
-class LearningApprovalModal(discord.ui.Modal, title="Approve Scanner Learning Entry"):
-    lesson = discord.ui.TextInput(
-        label="What the scanner will learn (edit if needed)",
-        style=discord.TextStyle.paragraph,
-        max_length=500,
-        placeholder="Do not flag: ...",
-    )
-
-    def __init__(self, original_text: str, category: str, proposed: str):
-        super().__init__()
-        self.original_text = original_text
-        self.category = category
-        self.lesson.default = proposed
-
-    async def on_submit(self, interaction: discord.Interaction):
-        scanner_feedback.record_false_positive(self.original_text, self.category)
-        await interaction.response.send_message(
-            f"Statement: Learning entry approved and committed to my targeting calibration.\n**Saved:** {self.lesson.value}",
-            ephemeral=True,
-        )
-
-
-class LearningReviewView(discord.ui.View):
-    def __init__(self, original_text: str, category: str, proposed_lesson: str):
-        super().__init__(timeout=7200)
-        self.original_text = original_text
-        self.category = category
-        self.proposed_lesson = proposed_lesson
-
-    @discord.ui.button(label="Approve & Save", style=discord.ButtonStyle.success, emoji="✅")
-    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = LearningApprovalModal(self.original_text, self.category, self.proposed_lesson)
-        await interaction.response.send_modal(modal)
-
-    @discord.ui.button(label="Discard", style=discord.ButtonStyle.danger, emoji="🗑️")
-    async def discard(self, interaction: discord.Interaction, button: discord.ui.Button):
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send("Statement: Learning entry discarded. My calibration remains unchanged.", ephemeral=True)
-
-
-class FlagActionView(discord.ui.View):
-    def __init__(self, target_user_id: int, flagged_text: str, category: str):
-        super().__init__(timeout=3600)
-        self.target_user_id = target_user_id
-        self.flagged_text = flagged_text
-        self.category = category
-
-    @discord.ui.button(label="False Positive", style=discord.ButtonStyle.gray, emoji="❌")
-    async def false_positive(self, interaction: Interaction, button: discord.ui.Button):
-        proposed = f'Do not flag messages like: "{self.flagged_text[:120]}"'
-        modal = LearningApprovalModal(self.flagged_text, self.category, proposed)
-        await interaction.response.send_modal(modal)
-
-
-async def _ai_scan(message: discord.Message):
-    try:
-        context_msgs = []
-        try:
-            async for m in message.channel.history(limit=4, before=message):
-                if m.author.bot or not m.content:
-                    continue
-                lines = [l for l in m.content.split('\n') if not l.strip().startswith('>')]
-                content = '\n'.join(lines).strip()
-                if content:
-                    context_msgs.append(f"{m.author.display_name}: {content}")
-        except Exception:
-            pass
-        context_msgs.reverse()
-
-        result = await ai_scanner.scan_message(message.content, context_msgs=context_msgs or None)
-        if not result:
-            return
-        alert_channel = bot.get_channel(ai_scanner.ALERT_CHANNEL_ID)
-        if not alert_channel:
-            return
-    except Exception as e:
-        logging.warning("_ai_scan error: %s", e)
-        return
-
-    flag_history.record_flag(message.author.id, message.guild.id)
-    author = message.author
-    category = result.get("category") or "Unknown"
-
-    embed = discord.Embed(
-        description=f"{author.mention} has posted content that may violate the rules.",
-        color=discord.Color.orange(),
-    )
-    embed.add_field(name="Category", value=category, inline=True)
-    embed.add_field(name="Channel", value=message.channel.mention, inline=True)
-    embed.add_field(name="Message", value=message.content[:1000], inline=False)
-    embed.add_field(name="Evidence", value=f"[Go to message]({message.jump_url})", inline=False)
-
-    view = FlagActionView(author.id, message.content, category)
-    await alert_channel.send(embed=embed, view=view)
 
 
 if __name__ == "__main__":
